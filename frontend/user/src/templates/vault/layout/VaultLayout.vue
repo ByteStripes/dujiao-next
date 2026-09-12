@@ -62,8 +62,8 @@
           <!-- 移动端：更多菜单 -->
           <div class="relative hidden max-[900px]:block" ref="moreEl">
             <button class="grid h-10 w-10 flex-none place-items-center rounded-full bg-secondary text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary" type="button" :aria-label="t('navbar.more')" @click="toggleMore">
-              <Menu v-if="!moreOpen" class="h-[18px] w-[18px]" />
-              <X v-else class="h-[18px] w-[18px]" />
+              <Menu v-if="!moreOpen" class="pointer-events-none h-[18px] w-[18px]" />
+              <X v-else class="pointer-events-none h-[18px] w-[18px]" />
             </button>
             <div v-if="moreOpen" class="absolute right-0 top-[calc(100%+8px)] z-[60] flex min-w-[168px] flex-col gap-0.5 rounded-md border bg-card p-2 shadow-[var(--shadow-lg)]">
               <template v-for="item in menuItems" :key="`m-${item.key}`">

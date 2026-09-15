@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	cardsecretdomain "github.com/dujiao-next/internal/modules/cardsecret/domain"
+	mappingdomain "github.com/dujiao-next/internal/modules/catalog/mapping/domain"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
 
 	"github.com/dujiao-next/internal/constants"
@@ -230,27 +231,23 @@ func (r *Store) GetInventoryAlertItems(lowStockThreshold int64) ([]dashboard.Inv
 			UpstreamIsActive bool `gorm:"column:upstream_is_active"`
 		}
 		var mappingRows []skuMappingRow
-		if err := r.db.Table("sku_mappings sm").
-			Select("sm.product_mapping_id, sm.local_sku_id, sm.upstream_stock, sm.upstream_is_active").
-			Joins("JOIN product_mappings pm ON pm.id = sm.product_mapping_id").
-			Where("pm.local_product_id IN ? AND pm.deleted_at IS NULL AND sm.deleted_at IS NULL", upstreamProductIDs).
+		if err := r.db.Model(&mappingdomain.SKUMapping{}).
+			Select("sku_mappings.product_mapping_id, sku_mappings.local_sku_id, sku_mappings.upstream_stock, sku_mappings.upstream_is_active").
+			Joins("JOIN product_mappings ON product_mappings.id = sku_mappings.product_mapping_id").
+			Where("product_mappings.local_product_id IN ? AND product_mappings.deleted_at IS NULL AND sku_mappings.deleted_at IS NULL", upstreamProductIDs).
 			Scan(&mappingRows).Error; err != nil {
 			return nil, err
 		}
 
 		productMappingToProduct := make(map[uint]uint)
-		type productMappingRow struct {
-			ID             uint `gorm:"column:id"`
-			LocalProductID uint `gorm:"column:local_product_id"`
-		}
-		var pmRows []productMappingRow
-		if err := r.db.Table("product_mappings").
+		var productMappings []mappingdomain.Mapping
+		if err := r.db.Model(&mappingdomain.Mapping{}).
 			Select("id, local_product_id").
 			Where("local_product_id IN ? AND deleted_at IS NULL", upstreamProductIDs).
-			Scan(&pmRows).Error; err != nil {
+			Find(&productMappings).Error; err != nil {
 			return nil, err
 		}
-		for _, pm := range pmRows {
+		for _, pm := range productMappings {
 			productMappingToProduct[pm.ID] = pm.LocalProductID
 		}
 

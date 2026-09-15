@@ -3,9 +3,9 @@ package gormstore
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	cardsecretdomain "github.com/dujiao-next/internal/modules/cardsecret/domain"
+	mappingdomain "github.com/dujiao-next/internal/modules/catalog/mapping/domain"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
 
 	"github.com/dujiao-next/internal/constants"
@@ -104,32 +104,9 @@ func TestGetStockStatsUsesActiveManualSKUs(t *testing.T) {
 func TestGetInventoryAlertItemsIncludesUpstreamProducts(t *testing.T) {
 	repo, db := setupDashboardRepositoryTest(t)
 
-	// Define mapping tables for test
-	type ProductMapping struct {
-		ID             uint       `gorm:"primarykey"`
-		ConnectionID   uint       `gorm:"index;not null"`
-		LocalProductID uint       `gorm:"uniqueIndex;not null"`
-		CreatedAt      time.Time  `gorm:"index"`
-		UpdatedAt      time.Time  `gorm:"index"`
-		DeletedAt      *time.Time `gorm:"index"`
-	}
-	type SKUMapping struct {
-		ID               uint       `gorm:"primarykey"`
-		ProductMappingID uint       `gorm:"index;not null"`
-		LocalSKUID       uint       `gorm:"column:local_sku_id;index;not null"`
-		UpstreamSKUID    uint       `gorm:"column:upstream_sku_id;not null"`
-		UpstreamStock    int        `gorm:"not null;default:0"`
-		UpstreamIsActive bool       `gorm:"not null;default:true"`
-		CreatedAt        time.Time  `gorm:"index"`
-		UpdatedAt        time.Time  `gorm:"index"`
-		DeletedAt        *time.Time `gorm:"index"`
-	}
-
-	if err := db.Table("product_mappings").AutoMigrate(&ProductMapping{}); err != nil {
-		t.Fatalf("migrate product_mappings failed: %v", err)
-	}
-	if err := db.Table("sku_mappings").AutoMigrate(&SKUMapping{}); err != nil {
-		t.Fatalf("migrate sku_mappings failed: %v", err)
+	// Migrate mapping tables for test
+	if err := db.AutoMigrate(&mappingdomain.Mapping{}, &mappingdomain.SKUMapping{}); err != nil {
+		t.Fatalf("migrate mapping tables failed: %v", err)
 	}
 
 	category := createDashboardCategory(t, db, "dashboard-upstream-alert")
@@ -161,23 +138,23 @@ func TestGetInventoryAlertItemsIncludesUpstreamProducts(t *testing.T) {
 	}
 
 	// Create product mapping
-	productMapping := &ProductMapping{
+	productMapping := &mappingdomain.Mapping{
 		ConnectionID:   1,
 		LocalProductID: upstreamProduct.ID,
 	}
-	if err := db.Table("product_mappings").Create(productMapping).Error; err != nil {
+	if err := db.Create(productMapping).Error; err != nil {
 		t.Fatalf("create product mapping failed: %v", err)
 	}
 
 	// Create SKU mapping with low stock
-	skuMapping := &SKUMapping{
+	skuMapping := &mappingdomain.SKUMapping{
 		ProductMappingID: productMapping.ID,
 		LocalSKUID:       upstreamSKU.ID,
 		UpstreamSKUID:    999,
 		UpstreamStock:    2,
 		UpstreamIsActive: true,
 	}
-	if err := db.Table("sku_mappings").Create(skuMapping).Error; err != nil {
+	if err := db.Create(skuMapping).Error; err != nil {
 		t.Fatalf("create sku mapping failed: %v", err)
 	}
 

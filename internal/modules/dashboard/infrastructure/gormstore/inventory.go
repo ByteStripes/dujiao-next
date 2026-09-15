@@ -224,6 +224,9 @@ func (r *Store) GetInventoryAlertItems(lowStockThreshold int64) ([]dashboard.Inv
 			result = append(result, collectAutoInventoryAlertRows(product, autoAvailableMap[product.ID], lowStockThreshold)...)
 		case constants.FulfillmentTypeManual:
 			result = append(result, collectManualInventoryAlertRows(product, lowStockThreshold)...)
+		case constants.FulfillmentTypeUpstream:
+			// Skip upstream/mapped products - their stock is managed by upstream source
+			continue
 		}
 	}
 	return result, nil

@@ -100,6 +100,54 @@ func TestGetStockStatsUsesActiveManualSKUs(t *testing.T) {
 	}
 }
 
+func TestGetInventoryAlertItemsSkipsUpstreamProducts(t *testing.T) {
+	repo, db := setupDashboardRepositoryTest(t)
+	category := createDashboardCategory(t, db, "dashboard-upstream-skip")
+
+	// Create an upstream/mapped product with zero stock
+	upstreamProduct := &productdomain.Product{
+		CategoryID:      category.ID,
+		Slug:            "upstream-product",
+		TitleJSON:       jsonmap.JSON{"zh-CN": "对接商品"},
+		PriceAmount:     money.FromDecimal(decimal.NewFromInt(99)),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeUpstream,
+		IsMapped:        true,
+		IsActive:        true,
+	}
+	if err := db.Create(upstreamProduct).Error; err != nil {
+		t.Fatalf("create upstream product failed: %v", err)
+	}
+
+	// Create a manual product for comparison
+	manualProduct := &productdomain.Product{
+		CategoryID:       category.ID,
+		Slug:             "manual-product",
+		TitleJSON:        jsonmap.JSON{"zh-CN": "手动商品"},
+		PriceAmount:      money.FromDecimal(decimal.NewFromInt(88)),
+		PurchaseType:     constants.ProductPurchaseMember,
+		FulfillmentType:  constants.FulfillmentTypeManual,
+		ManualStockTotal: 0,
+		IsActive:         true,
+	}
+	if err := db.Create(manualProduct).Error; err != nil {
+		t.Fatalf("create manual product failed: %v", err)
+	}
+
+	rows, err := repo.GetInventoryAlertItems(5)
+	if err != nil {
+		t.Fatalf("get inventory alert items failed: %v", err)
+	}
+
+	// Should only include the manual product, not the upstream one
+	if len(rows) != 1 {
+		t.Fatalf("inventory alert rows want 1 got %d: %+v", len(rows), rows)
+	}
+	if rows[0].ProductID != manualProduct.ID {
+		t.Fatalf("alert should be for manual product %d, got %d", manualProduct.ID, rows[0].ProductID)
+	}
+}
+
 func TestGetInventoryAlertItemsFallsBackToProductLevelWhenOnlyInactiveAutoSKUHasStock(t *testing.T) {
 	repo, db := setupDashboardRepositoryTest(t)
 	if err := db.AutoMigrate(&cardsecretdomain.Secret{}); err != nil {

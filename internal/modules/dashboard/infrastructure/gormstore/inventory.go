@@ -188,9 +188,13 @@ func (r *Store) GetInventoryAlertItems(lowStockThreshold int64) ([]dashboard.Inv
 	}
 
 	autoProductIDs := make([]uint, 0)
+	upstreamProductIDs := make([]uint, 0)
 	for _, product := range products {
-		if strings.TrimSpace(product.FulfillmentType) == constants.FulfillmentTypeAuto {
+		switch strings.TrimSpace(product.FulfillmentType) {
+		case constants.FulfillmentTypeAuto:
 			autoProductIDs = append(autoProductIDs, product.ID)
+		case constants.FulfillmentTypeUpstream:
+			upstreamProductIDs = append(upstreamProductIDs, product.ID)
 		}
 	}
 
@@ -217,6 +221,52 @@ func (r *Store) GetInventoryAlertItems(lowStockThreshold int64) ([]dashboard.Inv
 		}
 	}
 
+	upstreamMappingsByProduct := make(map[uint][]interface{})
+	if len(upstreamProductIDs) > 0 {
+		type skuMappingRow struct {
+			ProductMappingID uint `gorm:"column:product_mapping_id"`
+			LocalSKUID       uint `gorm:"column:local_sku_id"`
+			UpstreamStock    int  `gorm:"column:upstream_stock"`
+			UpstreamIsActive bool `gorm:"column:upstream_is_active"`
+		}
+		var mappingRows []skuMappingRow
+		if err := r.db.Table("sku_mappings sm").
+			Select("sm.product_mapping_id, sm.local_sku_id, sm.upstream_stock, sm.upstream_is_active").
+			Joins("JOIN product_mappings pm ON pm.id = sm.product_mapping_id").
+			Where("pm.local_product_id IN ? AND pm.deleted_at IS NULL AND sm.deleted_at IS NULL", upstreamProductIDs).
+			Scan(&mappingRows).Error; err != nil {
+			return nil, err
+		}
+
+		productMappingToProduct := make(map[uint]uint)
+		type productMappingRow struct {
+			ID             uint `gorm:"column:id"`
+			LocalProductID uint `gorm:"column:local_product_id"`
+		}
+		var pmRows []productMappingRow
+		if err := r.db.Table("product_mappings").
+			Select("id, local_product_id").
+			Where("local_product_id IN ? AND deleted_at IS NULL", upstreamProductIDs).
+			Scan(&pmRows).Error; err != nil {
+			return nil, err
+		}
+		for _, pm := range pmRows {
+			productMappingToProduct[pm.ID] = pm.LocalProductID
+		}
+
+		for _, row := range mappingRows {
+			productID := productMappingToProduct[row.ProductMappingID]
+			if productID == 0 {
+				continue
+			}
+			upstreamMappingsByProduct[productID] = append(upstreamMappingsByProduct[productID], map[string]interface{}{
+				"local_sku_id":       row.LocalSKUID,
+				"upstream_stock":     row.UpstreamStock,
+				"upstream_is_active": row.UpstreamIsActive,
+			})
+		}
+	}
+
 	result := make([]dashboard.InventoryAlertRow, 0)
 	for _, product := range products {
 		switch strings.TrimSpace(product.FulfillmentType) {
@@ -225,8 +275,7 @@ func (r *Store) GetInventoryAlertItems(lowStockThreshold int64) ([]dashboard.Inv
 		case constants.FulfillmentTypeManual:
 			result = append(result, collectManualInventoryAlertRows(product, lowStockThreshold)...)
 		case constants.FulfillmentTypeUpstream:
-			// Skip upstream/mapped products - their stock is managed by upstream source
-			continue
+			result = append(result, collectUpstreamInventoryAlertRows(product, upstreamMappingsByProduct[product.ID], lowStockThreshold)...)
 		}
 	}
 	return result, nil
@@ -271,6 +320,83 @@ func collectManualInventoryAlertRows(product productdomain.Product, lowStockThre
 				SKUCode:           strings.TrimSpace(sku.SKUCode),
 				SKUSpecValuesJSON: sku.SpecValuesJSON,
 				FulfillmentType:   constants.FulfillmentTypeManual,
+				AlertType:         alertType,
+				AvailableStock:    available,
+			})
+		}
+	}
+	return result
+}
+
+func collectUpstreamInventoryAlertRows(product productdomain.Product, skuMappings []interface{}, lowStockThreshold int64) []dashboard.InventoryAlertRow {
+	result := make([]dashboard.InventoryAlertRow, 0)
+	activeSKUs := activeProductSKUs(product.SKUs)
+
+	// 构建 SKU 映射查找表
+	type skuMappingData struct {
+		LocalSKUID       uint
+		UpstreamStock    int
+		UpstreamIsActive bool
+	}
+	mappingByLocalSKU := make(map[uint]skuMappingData)
+	for _, item := range skuMappings {
+		if m, ok := item.(map[string]interface{}); ok {
+			localSKUID, _ := m["local_sku_id"].(uint)
+			upstreamStock, _ := m["upstream_stock"].(int)
+			upstreamIsActive, _ := m["upstream_is_active"].(bool)
+			if localSKUID > 0 {
+				mappingByLocalSKU[localSKUID] = skuMappingData{
+					LocalSKUID:       localSKUID,
+					UpstreamStock:    upstreamStock,
+					UpstreamIsActive: upstreamIsActive,
+				}
+			}
+		}
+	}
+
+	// 没有启用 SKU 的情况
+	if len(activeSKUs) == 0 {
+		totalStock := int64(0)
+		for _, mapping := range mappingByLocalSKU {
+			if !mapping.UpstreamIsActive {
+				continue
+			}
+			stock := int64(mapping.UpstreamStock)
+			if stock < 0 {
+				stock = 0
+			}
+			totalStock += stock
+		}
+		if alertType := classifyInventoryAlertType(totalStock, lowStockThreshold); alertType != "" {
+			result = append(result, dashboard.InventoryAlertRow{
+				ProductID:        product.ID,
+				ProductTitleJSON: product.TitleJSON,
+				FulfillmentType:  constants.FulfillmentTypeUpstream,
+				AlertType:        alertType,
+				AvailableStock:   totalStock,
+			})
+		}
+		return result
+	}
+
+	// 有启用 SKU 的情况
+	for _, sku := range activeSKUs {
+		mapping, hasMapp := mappingByLocalSKU[sku.ID]
+		if !hasMapp || !mapping.UpstreamIsActive {
+			continue
+		}
+		available := int64(mapping.UpstreamStock)
+		if available < 0 {
+			available = 0
+		}
+		if alertType := classifyInventoryAlertType(available, lowStockThreshold); alertType != "" {
+			result = append(result, dashboard.InventoryAlertRow{
+				ProductID:         product.ID,
+				SKUID:             sku.ID,
+				ProductTitleJSON:  product.TitleJSON,
+				SKUCode:           strings.TrimSpace(sku.SKUCode),
+				SKUSpecValuesJSON: sku.SpecValuesJSON,
+				FulfillmentType:   constants.FulfillmentTypeUpstream,
 				AlertType:         alertType,
 				AvailableStock:    available,
 			})

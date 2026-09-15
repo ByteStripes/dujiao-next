@@ -3,6 +3,7 @@ package gormstore
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	cardsecretdomain "github.com/dujiao-next/internal/modules/cardsecret/domain"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
@@ -100,15 +101,44 @@ func TestGetStockStatsUsesActiveManualSKUs(t *testing.T) {
 	}
 }
 
-func TestGetInventoryAlertItemsSkipsUpstreamProducts(t *testing.T) {
+func TestGetInventoryAlertItemsIncludesUpstreamProducts(t *testing.T) {
 	repo, db := setupDashboardRepositoryTest(t)
-	category := createDashboardCategory(t, db, "dashboard-upstream-skip")
 
-	// Create an upstream/mapped product with zero stock
+	// Define mapping tables for test
+	type ProductMapping struct {
+		ID             uint       `gorm:"primarykey"`
+		ConnectionID   uint       `gorm:"index;not null"`
+		LocalProductID uint       `gorm:"uniqueIndex;not null"`
+		CreatedAt      time.Time  `gorm:"index"`
+		UpdatedAt      time.Time  `gorm:"index"`
+		DeletedAt      *time.Time `gorm:"index"`
+	}
+	type SKUMapping struct {
+		ID               uint       `gorm:"primarykey"`
+		ProductMappingID uint       `gorm:"index;not null"`
+		LocalSKUID       uint       `gorm:"column:local_sku_id;index;not null"`
+		UpstreamSKUID    uint       `gorm:"column:upstream_sku_id;not null"`
+		UpstreamStock    int        `gorm:"not null;default:0"`
+		UpstreamIsActive bool       `gorm:"not null;default:true"`
+		CreatedAt        time.Time  `gorm:"index"`
+		UpdatedAt        time.Time  `gorm:"index"`
+		DeletedAt        *time.Time `gorm:"index"`
+	}
+
+	if err := db.Table("product_mappings").AutoMigrate(&ProductMapping{}); err != nil {
+		t.Fatalf("migrate product_mappings failed: %v", err)
+	}
+	if err := db.Table("sku_mappings").AutoMigrate(&SKUMapping{}); err != nil {
+		t.Fatalf("migrate sku_mappings failed: %v", err)
+	}
+
+	category := createDashboardCategory(t, db, "dashboard-upstream-alert")
+
+	// Create upstream product with low stock
 	upstreamProduct := &productdomain.Product{
 		CategoryID:      category.ID,
-		Slug:            "upstream-product",
-		TitleJSON:       jsonmap.JSON{"zh-CN": "对接商品"},
+		Slug:            "upstream-low-stock",
+		TitleJSON:       jsonmap.JSON{"zh-CN": "对接低库存商品"},
 		PriceAmount:     money.FromDecimal(decimal.NewFromInt(99)),
 		PurchaseType:    constants.ProductPurchaseMember,
 		FulfillmentType: constants.FulfillmentTypeUpstream,
@@ -119,19 +149,36 @@ func TestGetInventoryAlertItemsSkipsUpstreamProducts(t *testing.T) {
 		t.Fatalf("create upstream product failed: %v", err)
 	}
 
-	// Create a manual product for comparison
-	manualProduct := &productdomain.Product{
-		CategoryID:       category.ID,
-		Slug:             "manual-product",
-		TitleJSON:        jsonmap.JSON{"zh-CN": "手动商品"},
-		PriceAmount:      money.FromDecimal(decimal.NewFromInt(88)),
-		PurchaseType:     constants.ProductPurchaseMember,
-		FulfillmentType:  constants.FulfillmentTypeManual,
-		ManualStockTotal: 0,
-		IsActive:         true,
+	upstreamSKU := &productdomain.ProductSKU{
+		ProductID:   upstreamProduct.ID,
+		SKUCode:     "UP-SKU",
+		PriceAmount: money.FromDecimal(decimal.NewFromInt(99)),
+		IsActive:    true,
+		SortOrder:   0,
 	}
-	if err := db.Create(manualProduct).Error; err != nil {
-		t.Fatalf("create manual product failed: %v", err)
+	if err := db.Create(upstreamSKU).Error; err != nil {
+		t.Fatalf("create upstream sku failed: %v", err)
+	}
+
+	// Create product mapping
+	productMapping := &ProductMapping{
+		ConnectionID:   1,
+		LocalProductID: upstreamProduct.ID,
+	}
+	if err := db.Table("product_mappings").Create(productMapping).Error; err != nil {
+		t.Fatalf("create product mapping failed: %v", err)
+	}
+
+	// Create SKU mapping with low stock
+	skuMapping := &SKUMapping{
+		ProductMappingID: productMapping.ID,
+		LocalSKUID:       upstreamSKU.ID,
+		UpstreamSKUID:    999,
+		UpstreamStock:    2,
+		UpstreamIsActive: true,
+	}
+	if err := db.Table("sku_mappings").Create(skuMapping).Error; err != nil {
+		t.Fatalf("create sku mapping failed: %v", err)
 	}
 
 	rows, err := repo.GetInventoryAlertItems(5)
@@ -139,12 +186,21 @@ func TestGetInventoryAlertItemsSkipsUpstreamProducts(t *testing.T) {
 		t.Fatalf("get inventory alert items failed: %v", err)
 	}
 
-	// Should only include the manual product, not the upstream one
+	// Should include the upstream product
 	if len(rows) != 1 {
 		t.Fatalf("inventory alert rows want 1 got %d: %+v", len(rows), rows)
 	}
-	if rows[0].ProductID != manualProduct.ID {
-		t.Fatalf("alert should be for manual product %d, got %d", manualProduct.ID, rows[0].ProductID)
+	if rows[0].ProductID != upstreamProduct.ID {
+		t.Fatalf("alert should be for upstream product %d, got %d", upstreamProduct.ID, rows[0].ProductID)
+	}
+	if rows[0].FulfillmentType != constants.FulfillmentTypeUpstream {
+		t.Fatalf("fulfillment type want %s got %s", constants.FulfillmentTypeUpstream, rows[0].FulfillmentType)
+	}
+	if rows[0].AvailableStock != 2 {
+		t.Fatalf("available stock want 2 got %d", rows[0].AvailableStock)
+	}
+	if rows[0].AlertType != constants.NotificationAlertTypeLowStockProducts {
+		t.Fatalf("alert type want %s got %s", constants.NotificationAlertTypeLowStockProducts, rows[0].AlertType)
 	}
 }
 

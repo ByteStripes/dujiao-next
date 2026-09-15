@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 
@@ -221,7 +222,15 @@ func SetupRouter(cfg *config.Config, c *container.Container) *gin.Engine {
 	r.Use(middleware.CallbackRouteMiddleware(c.SettingService, paymentCallbackHandler, paymentWebhookHandler, upstreamHandler))
 
 	// 静态文件服务（上传的图片）必须放在前面。
-	r.Static("/uploads", "./uploads")
+	// SVG 强制下载并禁止脚本：即使上传校验被绕过，直接打开 /uploads/x.svg 也不会在站点源下执行脚本；
+	// <img src> 引用不受 Content-Disposition 影响，正常显示。
+	r.Group("/uploads", func(c *gin.Context) {
+		if strings.EqualFold(path.Ext(c.Request.URL.Path), ".svg") {
+			c.Header("Content-Disposition", "attachment")
+			c.Header("Content-Security-Policy", "sandbox; script-src 'none'")
+			c.Header("X-Content-Type-Options", "nosniff")
+		}
+	}).Static("/", "./uploads")
 
 	// SEO 资源（动态生成）。
 	sitemaptransport.RegisterRoutes(r, sitemaptransport.NewHandler(c.SitemapService, sitemapbrand.New(c.SettingService)))

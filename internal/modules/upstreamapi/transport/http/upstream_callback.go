@@ -71,7 +71,7 @@ func (h *Handler) HandleCallback(c *gin.Context) {
 	// 读取 body 用于签名验证
 	var body []byte
 	if c.Request.Body != nil {
-		body, err = io.ReadAll(c.Request.Body)
+		body, err = io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"ok": false, "message": "failed to read request body"})
 			return
@@ -79,12 +79,16 @@ func (h *Handler) HandleCallback(c *gin.Context) {
 		c.Request.Body = io.NopCloser(&bodyBuf{data: body})
 	}
 
-	// 解密 api_secret 并验证签名
+	// 解密 api_secret 并验证签名；解密失败视为配置错误，直接拒绝
 	apiSecret := conn.ApiSecret
 	if h.ConnectionSecrets != nil {
-		if decrypted, decErr := h.ConnectionSecrets.DecryptSecret(apiSecret); decErr == nil {
-			apiSecret = decrypted
+		decrypted, decErr := h.ConnectionSecrets.DecryptSecret(apiSecret)
+		if decErr != nil {
+			logger.Errorw("upstream_callback_secret_decrypt_failed", "connection_id", conn.ID, "error", decErr)
+			c.JSON(http.StatusOK, gin.H{"ok": false, "message": "internal error"})
+			return
 		}
+		apiSecret = decrypted
 	}
 
 	if !upstreamadapter.Verify(apiSecret, "POST", "/api/v1/upstream/callback", signature, timestamp, body) {

@@ -311,7 +311,10 @@ func VerifyCallback(cfg *Config, data *CallbackData) error {
 	if cfg == nil || data == nil {
 		return ErrConfigInvalid
 	}
-	if strings.TrimSpace(cfg.MerchantID) != "" && data.MerchantID != "" && data.MerchantID != strings.TrimSpace(cfg.MerchantID) {
+	if strings.TrimSpace(cfg.MerchantToken) == "" {
+		return ErrConfigInvalid
+	}
+	if strings.TrimSpace(cfg.MerchantID) != "" && data.MerchantID != strings.TrimSpace(cfg.MerchantID) {
 		return ErrSignatureInvalid
 	}
 	if data.Sign == "" {
@@ -322,7 +325,7 @@ func VerifyCallback(cfg *Config, data *CallbackData) error {
 		return pairs[i].Key < pairs[j].Key
 	})
 	expected := buildSignature(pairs, cfg.MerchantToken)
-	if !strings.EqualFold(expected, data.Sign) {
+	if !hmac.Equal([]byte(strings.ToLower(expected)), []byte(strings.ToLower(data.Sign))) {
 		return ErrSignatureInvalid
 	}
 	return nil

@@ -125,6 +125,43 @@ func wholesaleTierUniqueKey(skuID uint, skuCode string, minQuantity int) string 
 	return fmt.Sprintf("%s:%d", wholesaleTierScopeKey(skuID, skuCode), minQuantity)
 }
 
+// PruneWholesalePricesForSKUs 丢弃引用了已不存在 SKU 的批发价阶梯。
+//
+// 与 NormalizeWholesalePricesForSKUs 不同，这里不返回错误：删除 SKU 之后残留的
+// 阶梯属于预期内的清理场景，直接丢弃即可。若不清理，残留阶梯会让后续的批发价
+// 编辑因为「引用了不存在的 SKU」而校验失败。
+func PruneWholesalePricesForSKUs(tiers WholesalePriceTiers, skus []ProductSKU) WholesalePriceTiers {
+	if len(tiers) == 0 {
+		return tiers
+	}
+	liveIDs := make(map[uint]struct{}, len(skus))
+	liveCodes := make(map[string]struct{}, len(skus))
+	for _, sku := range skus {
+		if sku.ID > 0 {
+			liveIDs[sku.ID] = struct{}{}
+		}
+		if code := strings.ToLower(strings.TrimSpace(sku.SKUCode)); code != "" {
+			liveCodes[code] = struct{}{}
+		}
+	}
+
+	kept := make(WholesalePriceTiers, 0, len(tiers))
+	for _, tier := range tiers {
+		if tier.SKUID > 0 {
+			if _, ok := liveIDs[tier.SKUID]; !ok {
+				continue
+			}
+		}
+		if code := strings.ToLower(strings.TrimSpace(tier.SKUCode)); code != "" {
+			if _, ok := liveCodes[code]; !ok {
+				continue
+			}
+		}
+		kept = append(kept, tier)
+	}
+	return kept
+}
+
 func wholesaleTierScopeKey(skuID uint, skuCode string) string {
 	if code := strings.ToLower(strings.TrimSpace(skuCode)); code != "" {
 		return "code:" + code

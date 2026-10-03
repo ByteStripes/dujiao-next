@@ -153,26 +153,35 @@ func (s *WriteService) Update(id string, input CreateProductInput) (*productdoma
 			if err := s.applyProductSKUsWithStockGuard(skuRepo, cardSecretRepo, product.ID, fulfillmentType, normalizedSKUs); err != nil {
 				return err
 			}
-		} else if err := s.syncSingleProductSKU(skuRepo, product.ID, priceAmount, product.CostPriceAmount.Decimal, product.ManualStockTotal, true); err != nil {
+		} else if err := s.syncSingleProductSKU(skuRepo, cardSecretRepo, product.ID, fulfillmentType, priceAmount, product.CostPriceAmount.Decimal, product.ManualStockTotal, true); err != nil {
 			return err
+		}
+		// SKU 落库之后才处理批发价：此时的规格集合才是最终形态。
+		var skus []productdomain.ProductSKU
+		if skuRepo != nil {
+			var err error
+			skus, err = skuRepo.ListByProduct(product.ID, false)
+			if err != nil {
+				return err
+			}
 		}
 		// 仅当请求显式携带批发价字段时才覆盖，省略字段（nil）保留原有配置，
 		// 避免不关心批发价的局部更新静默清空已配阶梯。
 		if input.WholesalePrices != nil {
-			var skus []productdomain.ProductSKU
-			if skuRepo != nil {
-				var err error
-				skus, err = skuRepo.ListByProduct(product.ID, false)
-				if err != nil {
-					return err
-				}
-			}
 			wholesalePrices, err := productdomain.NormalizeWholesalePricesForSKUs(*input.WholesalePrices, skus)
 			if err != nil {
 				return err
 			}
 			product.WholesalePrices = wholesalePrices
+		} else {
+			// 上面可能删掉了规格行。保留的阶梯若仍指向已删除的 SKU，会让后续任何
+			// 批发价编辑都因为「引用了不存在的 SKU」而失败，这里顺手清掉悬空阶梯。
+			product.WholesalePrices = productdomain.PruneWholesalePricesForSKUs(product.WholesalePrices, skus)
 		}
+		// product 是读取时预加载出来的，带着一份过期的 SKU 快照。Save 默认会级联保存关联，
+		// 那份旧快照会把上面刚删掉的规格行按原 ID 重新插回来（issue #344 的「删了又回来」），
+		// 所以这里只落商品自身字段，规格由上面的 SKU 路径独占管理。
+		product.SKUs = nil
 		if err := productRepo.Update(product); err != nil {
 			return err
 		}

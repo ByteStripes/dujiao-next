@@ -13,6 +13,7 @@ import (
 	"github.com/dujiao-next/internal/persistence/gormutil"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ProductStore 是 Catalog Product 端口的 GORM 实现。
@@ -265,9 +266,13 @@ func (r *ProductStore) Create(product *productdomain.Product) error {
 	return r.db.Create(product).Error
 }
 
-// Update 更新商品
+// Update 更新商品自身字段。
+//
+// 不级联保存关联：调用方拿到的 product 往往带着读取时预加载的 Category/SKUs 快照，
+// 而 SKU 删除是硬删除，级联 upsert 会把已删除的规格按原 ID 重新插回（issue #344）。
+// SKU 一律由 SKURepository 独占管理。
 func (r *ProductStore) Update(product *productdomain.Product) error {
-	return r.db.Save(product).Error
+	return r.db.Omit(clause.Associations).Save(product).Error
 }
 
 // QuickUpdate 快速更新商品指定字段

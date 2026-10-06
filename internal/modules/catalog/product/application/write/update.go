@@ -3,8 +3,6 @@ package productwrite
 import (
 	"strings"
 
-	categorydomain "github.com/dujiao-next/internal/modules/catalog/category/domain"
-
 	"github.com/dujiao-next/internal/constants"
 	productcontract "github.com/dujiao-next/internal/modules/catalog/product/contract"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
@@ -42,7 +40,6 @@ func (s *WriteService) Update(id string, input CreateProductInput) (*productdoma
 	}
 
 	product.CategoryID = input.CategoryID
-	product.Category = categorydomain.Category{}
 	product.Slug = input.Slug
 	product.SeoMetaJSON = jsonmap.JSON(input.SeoMetaJSON)
 	product.TitleJSON = jsonmap.JSON(input.TitleJSON)
@@ -153,7 +150,7 @@ func (s *WriteService) Update(id string, input CreateProductInput) (*productdoma
 			if err := s.applyProductSKUsWithStockGuard(skuRepo, cardSecretRepo, product.ID, fulfillmentType, normalizedSKUs); err != nil {
 				return err
 			}
-		} else if err := s.syncSingleProductSKU(skuRepo, cardSecretRepo, product.ID, fulfillmentType, priceAmount, product.CostPriceAmount.Decimal, product.ManualStockTotal, true); err != nil {
+		} else if err := s.syncSingleProductSKU(skuRepo, cardSecretRepo, product.ID, fulfillmentType, priceAmount, product.CostPriceAmount.Decimal, product.ManualStockTotal); err != nil {
 			return err
 		}
 		// SKU 落库之后才处理批发价：此时的规格集合才是最终形态。
@@ -178,10 +175,6 @@ func (s *WriteService) Update(id string, input CreateProductInput) (*productdoma
 			// 批发价编辑都因为「引用了不存在的 SKU」而失败，这里顺手清掉悬空阶梯。
 			product.WholesalePrices = productdomain.PruneWholesalePricesForSKUs(product.WholesalePrices, skus)
 		}
-		// product 是读取时预加载出来的，带着一份过期的 SKU 快照。Save 默认会级联保存关联，
-		// 那份旧快照会把上面刚删掉的规格行按原 ID 重新插回来（issue #344 的「删了又回来」），
-		// 所以这里只落商品自身字段，规格由上面的 SKU 路径独占管理。
-		product.SKUs = nil
 		if err := productRepo.Update(product); err != nil {
 			return err
 		}

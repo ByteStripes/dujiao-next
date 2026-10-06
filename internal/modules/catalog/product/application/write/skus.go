@@ -28,7 +28,6 @@ func (s *WriteService) syncSingleProductSKU(
 	priceAmount decimal.Decimal,
 	costPriceAmount decimal.Decimal,
 	manualStockTotal int,
-	createWhenMissing bool,
 ) error {
 	if skuRepo == nil || productID == 0 {
 		return nil
@@ -38,9 +37,6 @@ func (s *WriteService) syncSingleProductSKU(
 		return err
 	}
 	if len(skus) == 0 {
-		if !createWhenMissing {
-			return nil
-		}
 		return skuRepo.Create(&productdomain.ProductSKU{
 			ProductID:         productID,
 			SKUCode:           productdomain.DefaultSKUCode,
@@ -361,8 +357,8 @@ func (s *WriteService) ensureAutoSKUCardSecretStockSafe(
 		return nil
 	}
 
+	// nextActive 只收录本次保留的行；不在其中的行将被删除。
 	nextActive := make(map[uint]bool, len(existingRows))
-	kept := make(map[uint]struct{}, len(rows))
 	for _, row := range rows {
 		if row.ID > 0 {
 			existing, ok := existingByID[row.ID]
@@ -370,34 +366,22 @@ func (s *WriteService) ensureAutoSKUCardSecretStockSafe(
 				return productcontract.ErrProductSKUInvalid
 			}
 			nextActive[existing.ID] = row.IsActive
-			kept[existing.ID] = struct{}{}
 			continue
 		}
 
 		codeKey := strings.ToLower(strings.TrimSpace(row.SKUCode))
 		if existing, ok := existingByCode[codeKey]; ok {
 			nextActive[existing.ID] = row.IsActive
-			kept[existing.ID] = struct{}{}
 		}
 	}
 
 	for _, existing := range existingRows {
-		if _, ok := nextActive[existing.ID]; !ok {
-			nextActive[existing.ID] = false
-		}
-		if _, ok := kept[existing.ID]; !ok {
-			nextActive[existing.ID] = false
-		}
-		if !existing.IsActive || nextActive[existing.ID] {
+		// 删除的行一律校验（与单规格收敛路径一致）；保留的行仅在由启用变为停用时校验。
+		if active, kept := nextActive[existing.ID]; kept && (!existing.IsActive || active) {
 			continue
 		}
-		total, available, used, err := cardSecretRepo.CountByProduct(productID, existing.ID)
-		if err != nil {
+		if err := ensureSKURemovable(cardSecretRepo, productID, fulfillmentType, existing); err != nil {
 			return err
-		}
-		outstanding := total - used
-		if available > 0 || outstanding > 0 {
-			return productcontract.ErrProductSKUHasCardSecretStock
 		}
 	}
 	return nil

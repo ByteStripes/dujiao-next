@@ -130,15 +130,18 @@ func wholesaleTierUniqueKey(skuID uint, skuCode string, minQuantity int) string 
 // 与 NormalizeWholesalePricesForSKUs 不同，这里不返回错误：删除 SKU 之后残留的
 // 阶梯属于预期内的清理场景，直接丢弃即可。若不清理，残留阶梯会让后续的批发价
 // 编辑因为「引用了不存在的 SKU」而校验失败。
+//
+// 与 NormalizeWholesalePricesForSKUs 的语义一致：带 SKUID 的阶梯只按 ID 判定存活，
+// 并把编码刷新为 SKU 当前值，避免仅修改 SKU 编码就把该规格的批发价清掉。
 func PruneWholesalePricesForSKUs(tiers WholesalePriceTiers, skus []ProductSKU) WholesalePriceTiers {
 	if len(tiers) == 0 {
 		return tiers
 	}
-	liveIDs := make(map[uint]struct{}, len(skus))
+	liveByID := make(map[uint]ProductSKU, len(skus))
 	liveCodes := make(map[string]struct{}, len(skus))
 	for _, sku := range skus {
 		if sku.ID > 0 {
-			liveIDs[sku.ID] = struct{}{}
+			liveByID[sku.ID] = sku
 		}
 		if code := strings.ToLower(strings.TrimSpace(sku.SKUCode)); code != "" {
 			liveCodes[code] = struct{}{}
@@ -148,11 +151,12 @@ func PruneWholesalePricesForSKUs(tiers WholesalePriceTiers, skus []ProductSKU) W
 	kept := make(WholesalePriceTiers, 0, len(tiers))
 	for _, tier := range tiers {
 		if tier.SKUID > 0 {
-			if _, ok := liveIDs[tier.SKUID]; !ok {
+			sku, ok := liveByID[tier.SKUID]
+			if !ok {
 				continue
 			}
-		}
-		if code := strings.ToLower(strings.TrimSpace(tier.SKUCode)); code != "" {
+			tier.SKUCode = strings.TrimSpace(sku.SKUCode)
+		} else if code := strings.ToLower(strings.TrimSpace(tier.SKUCode)); code != "" {
 			if _, ok := liveCodes[code]; !ok {
 				continue
 			}

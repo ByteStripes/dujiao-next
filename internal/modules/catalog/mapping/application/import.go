@@ -610,3 +610,47 @@ func (s *Service) ListUpstreamCategories(connectionID uint) ([]upstream.Upstream
 
 	return result.Categories, result.Supported, nil
 }
+
+// ListUpstreamCategoryCounts 分页拉取上游全部商品并按分类统计数量。
+// 与 BatchImportByCategory 使用同样的翻页方式，保证分类下的商品数量不受
+// 管理端已加载页数的影响（管理端仅加载首页商品用于预览，不代表分类下商品的真实数量）。
+func (s *Service) ListUpstreamCategoryCounts(connectionID uint) (map[uint]int, int, error) {
+	conn, err := s.connections.GetByID(connectionID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if conn == nil {
+		return nil, 0, siteconnectioncontract.ErrNotFound
+	}
+
+	adapter, err := s.connections.GetAdapter(conn)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	counts := make(map[uint]int)
+	page := 1
+	pageSize := 50
+	totalScanned := 0
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result, fetchErr := adapter.ListProducts(ctx, upstream.ListProductsOpts{
+			Page:     page,
+			PageSize: pageSize,
+		})
+		cancel()
+		if fetchErr != nil {
+			return nil, 0, fmt.Errorf("fetch upstream products page %d: %w", page, fetchErr)
+		}
+		for _, p := range result.Items {
+			counts[p.CategoryID]++
+		}
+		totalScanned += len(result.Items)
+		if len(result.Items) < pageSize || page*pageSize >= result.Total {
+			break
+		}
+		page++
+	}
+
+	return counts, totalScanned, nil
+}

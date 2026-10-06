@@ -103,9 +103,11 @@ const importViewMode = ref<'category' | 'flat'>('category')
 const upstreamCategories = ref<UpstreamCategory[]>([])
 const upstreamCategoriesSupported = ref(false)
 const loadingUpstreamCategories = ref(false)
-// 分类下的真实商品数量（遍历全部上游分页统计得出，不受管理端已加载页数影响）
-const categoryProductCounts = ref<Map<number, number>>(new Map())
+// 分类下的真实商品数量（遍历全部上游分页统计得出，不受管理端已加载页数影响）。
+// null 表示统计尚未完成或失败，此时分类列表退回按已加载商品计数，不阻塞展示。
+const categoryProductCounts = ref<Map<number, number> | null>(null)
 const loadingCategoryCounts = ref(false)
+const categoryCountsFailed = ref(false)
 const expandedCategoryIds = ref<Set<number>>(new Set())
 const autoCreateCategory = ref(false)
 const categoryImporting = ref(false)
@@ -430,7 +432,8 @@ const openImportModal = () => {
   mappedUpstreamIds.value = new Set()
   selectedProductIds.value = new Set()
   importExpandedIds.value = new Set()
-  categoryProductCounts.value = new Map()
+  categoryProductCounts.value = null
+  categoryCountsFailed.value = false
   showImportModal.value = true
 }
 
@@ -490,16 +493,23 @@ const fetchUpstreamCategories = async (connectionId: string) => {
 
 // 拉取分类下的真实商品数量（后端遍历全部上游分页统计），避免商品数量较多时
 // 部分分类的商品仍在未加载的分页中，导致分类列表里看不到、误以为“对接不全”
+// 统计要遍历上游全部分页，商品多时较慢，所以不参与列表的加载态。
 const fetchUpstreamCategoryCounts = async (connectionId: string) => {
-  if (!connectionId) { categoryProductCounts.value = new Map(); return }
+  if (!connectionId) return
   loadingCategoryCounts.value = true
+  categoryCountsFailed.value = false
   try {
     const res = await adminAPI.getUpstreamCategoryCounts({ connection_id: connectionId })
+    if (importConnectionId.value !== connectionId) return  // 已切换连接，丢弃过期结果
     const counts = (res.data.data?.counts || {}) as Record<string, number>
     categoryProductCounts.value = new Map(Object.entries(counts).map(([k, v]) => [Number(k), v]))
   } catch {
-    categoryProductCounts.value = new Map()
-  } finally { loadingCategoryCounts.value = false }
+    if (importConnectionId.value !== connectionId) return
+    categoryProductCounts.value = null
+    categoryCountsFailed.value = true
+  } finally {
+    if (importConnectionId.value === connectionId) loadingCategoryCounts.value = false
+  }
 }
 
 // Group upstream products by category_id
@@ -514,17 +524,19 @@ const productsByCategory = computed(() => {
 })
 
 // Build display list: upstream categories with product counts.
-// productCount 来自 categoryProductCounts（后端统计的真实全量数量），而不是
+// productCount 优先取 categoryProductCounts（后端统计的真实全量数量），而不是
 // upstreamProducts（管理端当前已加载的分页），否则商品较多时未加载分页里的
-// 分类会被误判为空、从列表里消失。
+// 分类会被误判为空、从列表里消失。统计未就绪时退回已加载数量。
 const categoryDisplayList = computed(() => {
   // Build parent map for breadcrumb
   const catMap = new Map(upstreamCategories.value.map(c => [c.id, c]))
+  const counts = categoryProductCounts.value
+  const countOf = (catId: number) => counts ? (counts.get(catId) || 0) : (productsByCategory.value.get(catId) || []).length
 
   const result: { category: UpstreamCategory; productCount: number; path: string; nonMappedCount: number; fullyLoaded: boolean }[] = []
 
   for (const cat of upstreamCategories.value) {
-    const productCount = categoryProductCounts.value.get(cat.id) || 0
+    const productCount = countOf(cat.id)
     if (productCount === 0) continue  // Skip empty categories
 
     const loadedProducts = productsByCategory.value.get(cat.id) || []
@@ -542,7 +554,7 @@ const categoryDisplayList = computed(() => {
   }
 
   // Also include uncategorized (category_id = 0) if any
-  const uncategorizedCount = categoryProductCounts.value.get(0) || 0
+  const uncategorizedCount = countOf(0)
   if (uncategorizedCount > 0) {
     const loadedUncategorized = productsByCategory.value.get(0) || []
     const fullyLoaded = loadedUncategorized.length >= uncategorizedCount
@@ -623,6 +635,9 @@ watch(importConnectionId, (value) => {
   importExpandedIds.value = new Set()
   expandedCategoryIds.value = new Set()
   autoCreateCategory.value = false
+  categoryProductCounts.value = null
+  categoryCountsFailed.value = false
+  loadingCategoryCounts.value = false
   fetchUpstreamProducts(value)
   fetchUpstreamCategories(value)
   fetchUpstreamCategoryCounts(value)
@@ -1032,9 +1047,12 @@ onMounted(() => { fetchConnections(); fetchCategories(); fetchMappings() })
           <!-- ===== Category View Mode ===== -->
           <div v-if="importViewMode === 'category' && upstreamCategoriesSupported" class="rounded-lg border border-border overflow-hidden">
             <div v-if="!importConnectionId" class="px-6 py-12 text-center text-sm text-muted-foreground">{{ t('productMappings.import.selectConnectionFirst') }}</div>
-            <div v-else-if="loadingUpstream || loadingUpstreamCategories || loadingCategoryCounts" class="px-6 py-12 text-center text-sm text-muted-foreground">{{ t('productMappings.import.upstreamProductLoading') }}</div>
+            <div v-else-if="loadingUpstream || loadingUpstreamCategories" class="px-6 py-12 text-center text-sm text-muted-foreground">{{ t('productMappings.import.upstreamProductLoading') }}</div>
             <div v-else-if="categoryDisplayList.length === 0" class="px-6 py-12 text-center text-sm text-muted-foreground">{{ t('productMappings.import.noUpstreamProducts') }}</div>
             <div v-else class="divide-y divide-border max-h-[55vh] overflow-y-auto">
+              <div v-if="loadingCategoryCounts || categoryCountsFailed" class="px-4 py-2 text-xs text-muted-foreground">
+                {{ t(loadingCategoryCounts ? 'productMappings.import.categoryCountsLoading' : 'productMappings.import.categoryCountsFailed') }}
+              </div>
               <div v-for="catItem in categoryDisplayList" :key="catItem.category.id">
                 <!-- Category header -->
                 <div class="flex items-center gap-3 px-4 py-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" @click="toggleCategoryExpand(catItem.category.id)">

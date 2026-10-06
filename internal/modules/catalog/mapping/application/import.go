@@ -611,10 +611,10 @@ func (s *Service) ListUpstreamCategories(connectionID uint) ([]upstream.Upstream
 	return result.Categories, result.Supported, nil
 }
 
-// ListUpstreamCategoryCounts 分页拉取上游全部商品并按分类统计数量。
-// 与 BatchImportByCategory 使用同样的翻页方式，保证分类下的商品数量不受
-// 管理端已加载页数的影响（管理端仅加载首页商品用于预览，不代表分类下商品的真实数量）。
-func (s *Service) ListUpstreamCategoryCounts(connectionID uint) (map[uint]int, int, error) {
+// ListUpstreamCategoryCounts 拉取上游全部商品并按分类统计数量。
+// 管理端只加载首页商品用于预览，不代表分类下商品的真实数量，所以这里遍历全部分页。
+// ctx 取自请求：管理端关闭弹窗或切换连接后，剩余分页不再继续拉取。
+func (s *Service) ListUpstreamCategoryCounts(ctx context.Context, connectionID uint) (map[uint]int, int, error) {
 	conn, err := s.connections.GetByID(connectionID)
 	if err != nil {
 		return nil, 0, err
@@ -628,29 +628,39 @@ func (s *Service) ListUpstreamCategoryCounts(connectionID uint) (map[uint]int, i
 		return nil, 0, err
 	}
 
+	products, err := listAllUpstreamProducts(ctx, adapter)
+	if err != nil {
+		return nil, 0, err
+	}
 	counts := make(map[uint]int)
-	page := 1
-	pageSize := 50
-	totalScanned := 0
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		result, fetchErr := adapter.ListProducts(ctx, upstream.ListProductsOpts{
+	for _, p := range products {
+		counts[p.CategoryID]++
+	}
+	return counts, len(products), nil
+}
+
+// maxUpstreamProductPages 全量翻页的页数上限（每页 50 条，即 5 万条商品）。
+// 上游若忽略 page 参数且 total 异常，翻页条件永远不满足，靠它兜底防止死循环。
+const maxUpstreamProductPages = 1000
+
+// listAllUpstreamProducts 逐页拉取上游全部商品。上游 page_size 上限为 50。
+func listAllUpstreamProducts(ctx context.Context, adapter upstream.Adapter) ([]upstream.UpstreamProduct, error) {
+	const pageSize = 50
+	var products []upstream.UpstreamProduct
+	for page := 1; page <= maxUpstreamProductPages; page++ {
+		pageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		result, err := adapter.ListProducts(pageCtx, upstream.ListProductsOpts{
 			Page:     page,
 			PageSize: pageSize,
 		})
 		cancel()
-		if fetchErr != nil {
-			return nil, 0, fmt.Errorf("fetch upstream products page %d: %w", page, fetchErr)
+		if err != nil {
+			return nil, fmt.Errorf("fetch upstream products page %d: %w", page, err)
 		}
-		for _, p := range result.Items {
-			counts[p.CategoryID]++
-		}
-		totalScanned += len(result.Items)
+		products = append(products, result.Items...)
 		if len(result.Items) < pageSize || page*pageSize >= result.Total {
-			break
+			return products, nil
 		}
-		page++
 	}
-
-	return counts, totalScanned, nil
+	return nil, fmt.Errorf("upstream products exceed %d pages", maxUpstreamProductPages)
 }

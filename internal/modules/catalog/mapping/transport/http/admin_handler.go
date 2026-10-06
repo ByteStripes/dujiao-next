@@ -1,6 +1,7 @@
 package mappinghttp
 
 import (
+	"context"
 	"errors"
 
 	mappingapp "github.com/dujiao-next/internal/modules/catalog/mapping/application"
@@ -28,7 +29,7 @@ type ProductMappingService interface {
 	ListUpstreamProducts(connectionID uint, page, pageSize int) (*upstream.ProductListResult, error)
 	GetMappedUpstreamIDs(connectionID uint) ([]uint, error)
 	ListUpstreamCategories(connectionID uint) ([]upstream.UpstreamCategory, bool, error)
-	ListUpstreamCategoryCounts(connectionID uint) (map[uint]int, int, error)
+	ListUpstreamCategoryCounts(ctx context.Context, connectionID uint) (map[uint]int, int, error)
 	BatchImportByCategory(connectionID, upstreamCategoryID uint, autoCreateCategory bool, localCategoryID uint) (*mappingapp.BatchImportByCategoryResult, error)
 }
 
@@ -428,7 +429,7 @@ func (h *AdminHandler) ListUpstreamCategoryCounts(c *gin.Context) {
 		return
 	}
 
-	counts, total, err := h.service.ListUpstreamCategoryCounts(connectionID)
+	counts, total, err := h.service.ListUpstreamCategoryCounts(c.Request.Context(), connectionID)
 	if err != nil {
 		if errors.Is(err, siteconnectioncontract.ErrNotFound) {
 			ginutil.RespondError(c, response.CodeNotFound, "error.connection_not_found", nil)

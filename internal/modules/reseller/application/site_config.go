@@ -17,6 +17,7 @@ import (
 
 	"github.com/dujiao-next/internal/cache"
 	"github.com/dujiao-next/internal/constants"
+	"github.com/dujiao-next/internal/shared/contactlink"
 	"github.com/dujiao-next/internal/shared/jsonmap"
 	"github.com/dujiao-next/internal/shared/mailbrand"
 )
@@ -152,11 +153,11 @@ func validateSupportURL(raw string) (string, error) {
 // NormalizeResellerSupport 归一化并校验客服联系方式。
 func NormalizeResellerSupport(input ResellerSupportInput) (jsonmap.JSON, error) {
 	telegram := trimLimit(input.Telegram, 500)
-	if telegram != "" && !strings.HasPrefix(telegram, "https://telegram.me/") && !strings.HasPrefix(telegram, "https://t.me/") && !strings.HasPrefix(telegram, "tg://") {
+	if telegram != "" && !contactlink.IsTelegram(telegram) {
 		return nil, newResellerFieldError("support_telegram")
 	}
 	whatsApp := trimLimit(input.WhatsApp, 500)
-	if whatsApp != "" && !strings.HasPrefix(whatsApp, "https://wa.me/") && !strings.HasPrefix(whatsApp, "https://api.whatsapp.com/") {
+	if whatsApp != "" && !contactlink.IsWhatsApp(whatsApp) {
 		return nil, newResellerFieldError("support_whatsapp")
 	}
 	email := trimLimit(input.Email, 320)

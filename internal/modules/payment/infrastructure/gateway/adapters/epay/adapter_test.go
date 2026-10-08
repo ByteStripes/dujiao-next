@@ -152,7 +152,7 @@ func TestEpayAdapter_CreatePayment_V2RedirectUsesFormURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse redirect url: %v", err)
 	}
-	if got := parsed.Scheme + "://" + parsed.Host + parsed.Path; got != "https://api.example.com/api/v1/payments/epay-redirect" {
+	if got := parsed.Scheme + "://" + parsed.Host + parsed.Path; got != "https://shop.example.com/api/v1/payments/epay-redirect" {
 		t.Fatalf("redirect url = %s", result.RedirectURL)
 	}
 	if got := parsed.Query().Get("payment_id"); got != "42" {
@@ -203,13 +203,31 @@ func TestEpayAdapter_CreatePayment_V2RedirectFailsClosed(t *testing.T) {
 	}
 
 	input.PaymentID = 42
-	ftpNotify := jsonmap.JSON{}
+	ftpReturn := jsonmap.JSON{}
 	for key, value := range base {
-		ftpNotify[key] = value
+		ftpReturn[key] = value
 	}
-	ftpNotify["notify_url"] = "ftp://files.example.com/notify"
-	if _, err := a.CreatePayment(context.Background(), ftpNotify, input); !errors.Is(err, paymentcontract.ErrGatewayConfigInvalid) {
-		t.Fatalf("non-http notify origin err = %v, want config invalid", err)
+	ftpReturn["return_url"] = "ftp://files.example.com/return"
+	if _, err := a.CreatePayment(context.Background(), ftpReturn, input); !errors.Is(err, paymentcontract.ErrGatewayConfigInvalid) {
+		t.Fatalf("non-http return origin err = %v, want config invalid", err)
+	}
+}
+
+func TestEpayRedirectFormURLPrefersReturnURL(t *testing.T) {
+	formURL, _, err := epayRedirectFormURL(7, "https://shop.example.com/pay", "https://api.example.com/callback")
+	if err != nil {
+		t.Fatalf("return_url origin: %v", err)
+	}
+	if !strings.HasPrefix(formURL, "https://shop.example.com/api/v1/payments/epay-redirect?") {
+		t.Fatalf("formURL = %s, want return_url host", formURL)
+	}
+
+	formURL, _, err = epayRedirectFormURL(7, "", "https://api.example.com/callback")
+	if err != nil {
+		t.Fatalf("notify_url fallback: %v", err)
+	}
+	if !strings.HasPrefix(formURL, "https://api.example.com/api/v1/payments/epay-redirect?") {
+		t.Fatalf("formURL = %s, want notify_url host", formURL)
 	}
 }
 

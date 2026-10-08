@@ -155,7 +155,7 @@ func (a *epayAdapter) CreatePayment(ctx context.Context, raw jsonmap.JSON, input
 
 	redirectURL := result.PayURL
 	if mode == constants.PaymentInteractionRedirect && epaySubmitPOST(payload) {
-		formURL, token, formErr := epayRedirectFormURL(input.PaymentID, notifyURL)
+		formURL, token, formErr := epayRedirectFormURL(input.PaymentID, returnURL, notifyURL)
 		if formErr != nil {
 			return nil, formErr
 		}
@@ -178,14 +178,18 @@ func epaySubmitPOST(payload jsonmap.JSON) bool {
 	return strings.EqualFold(strings.TrimSpace(method), http.MethodPost)
 }
 
-// epayRedirectFormURL 把 v2 跳转收成站内表单地址。payment id 或 notify URL 没有 http(s) origin 时直接失败，不退回 GET。
-func epayRedirectFormURL(paymentID uint, notifyURL string) (string, string, error) {
+// epayRedirectFormURL 把 v2 跳转收成站内表单地址。域名优先取 return_url，为空再退回 notify_url。
+func epayRedirectFormURL(paymentID uint, returnURL, notifyURL string) (string, string, error) {
 	if paymentID == 0 {
 		return "", "", fmt.Errorf("%w: epay redirect payment id is required", paymentcontract.ErrGatewayConfigInvalid)
 	}
-	origin, err := httpOrigin(notifyURL)
+	originSource := strings.TrimSpace(returnURL)
+	if originSource == "" {
+		originSource = strings.TrimSpace(notifyURL)
+	}
+	origin, err := httpOrigin(originSource)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: epay notify url origin", paymentcontract.ErrGatewayConfigInvalid)
+		return "", "", fmt.Errorf("%w: epay redirect url origin", paymentcontract.ErrGatewayConfigInvalid)
 	}
 	token, err := newEpayRedirectToken()
 	if err != nil {
@@ -201,10 +205,10 @@ func httpOrigin(raw string) (string, error) {
 		return "", err
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("notify url scheme %q", parsed.Scheme)
+		return "", fmt.Errorf("url scheme %q", parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("notify url host is empty")
+		return "", fmt.Errorf("url host is empty")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }

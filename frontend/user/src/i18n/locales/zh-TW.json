@@ -101,7 +101,9 @@
     "contact": "聯絡我們",
     "rights": "保留所有權利",
     "terms": "服務條款",
-    "privacy": "隱私政策"
+    "privacy": "隱私政策",
+    "email": "信箱",
+    "supportUrl": "線上客服"
   },
   "notFoundPage": {
     "title": "頁面不存在",

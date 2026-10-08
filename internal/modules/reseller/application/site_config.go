@@ -486,10 +486,9 @@ func applyResellerSiteConfigToPublicConfig(out map[string]interface{}, cfg *rese
 	}
 	out["brand"] = brand
 
-	contact, _ := out["contact"].(map[string]interface{})
-	if contact == nil {
-		contact = map[string]interface{}{}
-	}
+	// A saved reseller config owns contact entirely: empty fields stay hidden
+	// instead of falling back to the main site's support channels.
+	contact := map[string]interface{}{}
 	for _, key := range []string{"telegram", "whatsapp", "email", "support_url"} {
 		if value, ok := cfg.SupportJSON[key].(string); ok && strings.TrimSpace(value) != "" {
 			contact[key] = value

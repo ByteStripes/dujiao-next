@@ -101,7 +101,9 @@
     "contact": "联系我们",
     "rights": "保留所有权利",
     "terms": "服务条款",
-    "privacy": "隐私政策"
+    "privacy": "隐私政策",
+    "email": "邮箱",
+    "supportUrl": "在线客服"
   },
   "notFoundPage": {
     "title": "页面不存在",

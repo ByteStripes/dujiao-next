@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/dujiao-next/internal/constants"
+	"github.com/dujiao-next/internal/shared/contactlink"
 	"github.com/dujiao-next/internal/shared/jsonmap"
 )
 
@@ -136,6 +137,27 @@ func normalizeSiteContact(raw interface{}) map[string]interface{} {
 	result["telegram"] = normalizeSettingText(contactMap["telegram"])
 	result["whatsapp"] = normalizeSettingText(contactMap["whatsapp"])
 	return result
+}
+
+// SettingFieldError 表示设置中某个字段校验失败，Field 供 handler 映射为 i18n 文案。
+type SettingFieldError struct {
+	Field string
+}
+
+func (e *SettingFieldError) Error() string {
+	return "setting field invalid: " + e.Field
+}
+
+// validateSiteSetting 与分销站共用客服链接规则，避免两个入口对同一值给出不同结果。
+func validateSiteSetting(value jsonmap.JSON) error {
+	contact, _ := value["contact"].(map[string]interface{})
+	if telegram, _ := contact["telegram"].(string); telegram != "" && !contactlink.IsTelegram(telegram) {
+		return &SettingFieldError{Field: "contact_telegram"}
+	}
+	if whatsApp, _ := contact["whatsapp"].(string); whatsApp != "" && !contactlink.IsWhatsApp(whatsApp) {
+		return &SettingFieldError{Field: "contact_whatsapp"}
+	}
+	return nil
 }
 
 func normalizeSiteBrand(raw interface{}) map[string]interface{} {

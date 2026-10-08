@@ -88,7 +88,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 
 	// 构建手动表单数据
 	var manualFormData map[string]jsonmap.JSON
-	if req.ManualFormData != nil && product.FulfillmentType == constants.FulfillmentTypeManual {
+	// 不按交付类型过滤：对接商品（upstream）也可能带表单，是否必填由订单服务按 schema 校验。
+	if req.ManualFormData != nil {
 		manualFormData = map[string]jsonmap.JSON{
 			fmt.Sprintf("%d", sku.ProductID): req.ManualFormData,
 		}

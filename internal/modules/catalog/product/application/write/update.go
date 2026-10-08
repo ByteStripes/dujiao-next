@@ -46,7 +46,10 @@ func (s *WriteService) Update(id string, input CreateProductInput) (*productdoma
 	product.DescriptionJSON = jsonmap.JSON(input.DescriptionJSON)
 	product.ContentJSON = jsonmap.JSON(input.ContentJSON)
 	product.InstructionsJSON = jsonmap.JSON(input.InstructionsJSON)
-	product.ManualFormSchemaJSON = jsonmap.JSON{}
+	// 对接商品的交付表单由上游同步维护，后台编辑不得清空。
+	if !product.IsMapped {
+		product.ManualFormSchemaJSON = jsonmap.JSON{}
+	}
 	product.PriceAmount = money.FromDecimal(priceAmount)
 	product.SortOrder = input.SortOrder
 	product.Images = jsonslice.Strings(input.Images)

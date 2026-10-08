@@ -140,6 +140,7 @@ func TestResellerSiteConfigServiceApplyPublicConfigOverlay(t *testing.T) {
 	if _, err := svc.UpdateUserSiteConfig(context.Background(), user.ID, ResellerSiteConfigInput{
 		SiteName: "Overlay Store",
 		Favicon:  "/uploads/reseller/favicon.png",
+		Support:  ResellerSupportInput{Email: "help@shop.example.test", SupportURL: "https://shop.example.test/support"},
 		SEO: ResellerSEOInput{
 			Title: LocalizedTextInput{"zh-CN": "覆盖标题", "en-US": "Overlay Title"},
 		},
@@ -154,6 +155,10 @@ func TestResellerSiteConfigServiceApplyPublicConfigOverlay(t *testing.T) {
 			"site_url":  "https://main.example.test",
 		},
 		"currency": "CNY",
+		"contact": map[string]interface{}{
+			"telegram": "https://t.me/main",
+			"whatsapp": "https://wa.me/1234567890",
+		},
 		"seo": map[string]interface{}{
 			"title": map[string]interface{}{"zh-CN": "主站标题", "en-US": "Main Title"},
 		},
@@ -174,6 +179,16 @@ func TestResellerSiteConfigServiceApplyPublicConfigOverlay(t *testing.T) {
 	}
 	if out["currency"] != "CNY" {
 		t.Fatalf("global inherited fields should remain, got currency=%v", out["currency"])
+	}
+	contact := resellerSiteConfigTestMap(out["contact"])
+	if contact["email"] != "help@shop.example.test" || contact["support_url"] != "https://shop.example.test/support" {
+		t.Fatalf("reseller contact fields should be emitted, got %+v", contact)
+	}
+	if _, exists := contact["telegram"]; exists {
+		t.Fatalf("empty reseller contact must not fall back to main site, got %+v", contact)
+	}
+	if _, exists := contact["whatsapp"]; exists {
+		t.Fatalf("empty reseller contact must not fall back to main site, got %+v", contact)
 	}
 	seo := resellerSiteConfigTestMap(out["seo"])
 	title := resellerSiteConfigTestMap(seo["title"])

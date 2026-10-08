@@ -1,6 +1,7 @@
 package settingshttp
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/dujiao-next/internal/cache"
@@ -54,6 +55,12 @@ func (h *AdminHandler) Get(c *gin.Context) {
 	response.Success(c, value)
 }
 
+// settingFieldErrorKeys 复用分销站同名字段的文案，两边校验规则一致。
+var settingFieldErrorKeys = map[string]string{
+	"contact_telegram": "error.reseller_support_telegram_invalid",
+	"contact_whatsapp": "error.reseller_support_whatsapp_invalid",
+}
+
 // Update 更新设置。
 func (h *AdminHandler) Update(c *gin.Context) {
 	var req updateRequest
@@ -73,6 +80,13 @@ func (h *AdminHandler) Update(c *gin.Context) {
 
 	result, err := h.settings.UpdateWithEffects(req.Key, req.Value)
 	if err != nil {
+		var fieldErr *settingsapp.SettingFieldError
+		if errors.As(err, &fieldErr) {
+			if key, ok := settingFieldErrorKeys[fieldErr.Field]; ok {
+				ginutil.RespondError(c, response.CodeBadRequest, key, nil)
+				return
+			}
+		}
 		ginutil.RespondError(c, response.CodeInternal, "error.settings_save_failed", err)
 		return
 	}

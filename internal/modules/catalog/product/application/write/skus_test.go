@@ -2,6 +2,7 @@ package productwrite
 
 import (
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dujiao-next/internal/constants"
 	productcontract "github.com/dujiao-next/internal/modules/catalog/product/contract"
+	"github.com/dujiao-next/internal/shared/jsonmap"
 	"github.com/dujiao-next/internal/shared/money"
 
 	"github.com/shopspring/decimal"
@@ -308,4 +310,55 @@ func (repo *memorySKURepository) PurgeSoftDeletedByProductAndCode(uint, string) 
 func newSyncSingleSKURepo(t *testing.T) SKURepository {
 	t.Helper()
 	return &memorySKURepository{}
+}
+
+type formProductRepo struct{ product productdomain.Product }
+
+func (r *formProductRepo) GetByID(string) (*productdomain.Product, error) {
+	p := r.product
+	return &p, nil
+}
+func (r *formProductRepo) Create(p *productdomain.Product) error            { r.product = *p; return nil }
+func (r *formProductRepo) Update(p *productdomain.Product) error            { r.product = *p; return nil }
+func (r *formProductRepo) CountBySlug(string, *string) (int64, error)       { return 0, nil }
+func (r *formProductRepo) QuickUpdate(string, map[string]interface{}) error { return nil }
+
+type formUnitOfWork struct{ repos TransactionRepositories }
+
+func (u formUnitOfWork) WithinTransaction(fn func(TransactionRepositories) error) error {
+	return fn(u.repos)
+}
+
+// 后台编辑对接商品（如仅改价）不得清空上游同步下来的交付表单。
+func TestUpdateMappedProductPreservesUpstreamManualForm(t *testing.T) {
+	schema := jsonmap.JSON{"fields": []interface{}{map[string]interface{}{
+		"key": "x_handle", "type": "text", "required": true,
+	}}}
+	for _, displayType := range []string{constants.FulfillmentTypeAuto, constants.FulfillmentTypeManual} {
+		for _, inputSchema := range []map[string]interface{}{nil, {}, {"fields": []interface{}{}}} {
+			repo := &formProductRepo{product: productdomain.Product{
+				ID: 101, Slug: "mapped", IsMapped: true,
+				FulfillmentType:      constants.FulfillmentTypeUpstream,
+				ManualFormSchemaJSON: schema, PriceAmount: money.FromDecimal(decimal.NewFromInt(37)),
+			}}
+			skus := &memorySKURepository{}
+			service := NewWriteService(Options{Products: repo, SKUs: skus, Transactions: formUnitOfWork{
+				repos: TransactionRepositories{Products: repo, SKUs: skus},
+			}})
+			product, err := service.Update("101", CreateProductInput{
+				Slug: "mapped", PriceAmount: decimal.NewFromInt(40),
+				FulfillmentType: displayType, PurchaseType: constants.ProductPurchaseMember,
+				StockDisplayMode: constants.ProductStockDisplayStatus, ManualFormSchemaJSON: inputSchema,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(product.ManualFormSchemaJSON, schema) {
+				t.Fatalf("display=%s input=%v: schema erased, got %#v", displayType, inputSchema, product.ManualFormSchemaJSON)
+			}
+			if product.FulfillmentType != constants.FulfillmentTypeUpstream || !product.PriceAmount.Equal(decimal.NewFromInt(40)) {
+				t.Fatalf("unexpected fulfillment type or price: %#v", product)
+			}
+		}
+	}
 }

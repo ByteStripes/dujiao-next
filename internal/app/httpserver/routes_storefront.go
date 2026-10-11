@@ -99,10 +99,15 @@ func registerStorefrontRoutes(
 		paymenttransport.RegisterGuestWriteRoutes(guestWrite, paymentWriteHandler)
 	}
 
-	// 注册 / 忘记密码 / 发送验证码：沿用登录限流参数，独立计数并使用通用提示
-	authRule := loginRule
-	authRule.Prefix += ":auth"
-	authRule.MessageKey = "error.rate_limited"
+	// 注册 / 忘记密码 / 发送验证码：按 IP 计数，共享出口 IP（NAT）下一次完整流程就要 2~4 次请求，
+	// 不能照搬登录的 5 次/封 15 分钟，否则同网用户会被成批误封。
+	authRule := middleware.RateLimitRule{
+		Prefix:        loginRule.Prefix + ":auth",
+		WindowSeconds: 300,
+		MaxRequests:   20,
+		BlockSeconds:  300,
+		MessageKey:    "error.rate_limited",
+	}
 	authRateLimit := middleware.RateLimitMiddleware(redisClient, authRule, middleware.KeyByIP)
 
 	// 用户认证接口

@@ -198,7 +198,7 @@ type ProductSKURequest struct {
 	SpecValuesJSON   map[string]interface{} `json:"spec_values"`
 	PriceAmount      float64                `json:"price_amount" binding:"required"`
 	CostPriceAmount  float64                `json:"cost_price_amount"`
-	ManualStockTotal int                    `json:"manual_stock_total"`
+	ManualStockTotal *int                   `json:"manual_stock_total"`
 	IsActive         *bool                  `json:"is_active"`
 	SortOrder        int                    `json:"sort_order"`
 }

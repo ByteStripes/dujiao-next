@@ -3,6 +3,7 @@ package settingsapp
 import (
 	"encoding/json"
 	"errors"
+	settingsvalue "github.com/dujiao-next/internal/modules/settings/schema/value"
 	"net/mail"
 	"strings"
 	"time"
@@ -69,8 +70,8 @@ func DefaultPaymentFeeConfig() PaymentFeeConfig {
 func NormalizePaymentFeeConfig(value jsonmap.JSON) jsonmap.JSON {
 	config := DefaultPaymentFeeConfig()
 	if value != nil {
-		config.CustomerFeeEnabled = parseSettingBool(value[constants.SettingFieldCustomerFeeEnabled])
-		config.ReuseLegacyOrderFeePayment = parseSettingBool(value[constants.SettingFieldReuseLegacyOrderFeePayment])
+		config.CustomerFeeEnabled = settingsvalue.ParseBool(value[constants.SettingFieldCustomerFeeEnabled])
+		config.ReuseLegacyOrderFeePayment = settingsvalue.ParseBool(value[constants.SettingFieldReuseLegacyOrderFeePayment])
 	}
 	return jsonmap.JSON{
 		constants.SettingFieldCustomerFeeEnabled:         config.CustomerFeeEnabled,
@@ -275,7 +276,7 @@ func (s *Service) GetRegistrationEnabled(defaultValue bool) (bool, error) {
 	if !ok {
 		return defaultValue, nil
 	}
-	return parseSettingBool(raw), nil
+	return settingsvalue.ParseBool(raw), nil
 }
 
 // GetEmailVerificationEnabled 获取邮箱验证开关
@@ -294,7 +295,7 @@ func (s *Service) GetEmailVerificationEnabled(defaultValue bool) (bool, error) {
 	if !ok {
 		return defaultValue, nil
 	}
-	return parseSettingBool(raw), nil
+	return settingsvalue.ParseBool(raw), nil
 }
 
 // GetRegistrationEmailDomainPolicy 获取注册邮箱域名白名单策略。
@@ -311,7 +312,7 @@ func (s *Service) GetRegistrationEmailDomainPolicy() (RegistrationEmailDomainPol
 		return policy, nil
 	}
 	if raw, ok := value[constants.SettingFieldEmailDomainAllowlistEnabled]; ok {
-		policy.Enabled = parseSettingBool(raw)
+		policy.Enabled = settingsvalue.ParseBool(raw)
 	}
 	policy.AllowedDomains = normalizeRegistrationEmailDomains(value[constants.SettingFieldAllowedEmailDomains])
 	return policy, nil
@@ -402,7 +403,7 @@ func (s *Service) GetWalletOnlyPayment() bool {
 	if !ok {
 		return false
 	}
-	return parseSettingBool(raw)
+	return settingsvalue.ParseBool(raw)
 }
 
 // GetPaymentFeeConfig 获取支付手续费与旧订单兼容配置。
@@ -417,8 +418,8 @@ func (s *Service) GetPaymentFeeConfig() PaymentFeeConfig {
 	}
 	normalized := NormalizePaymentFeeConfig(value)
 	return PaymentFeeConfig{
-		CustomerFeeEnabled:         parseSettingBool(normalized[constants.SettingFieldCustomerFeeEnabled]),
-		ReuseLegacyOrderFeePayment: parseSettingBool(normalized[constants.SettingFieldReuseLegacyOrderFeePayment]),
+		CustomerFeeEnabled:         settingsvalue.ParseBool(normalized[constants.SettingFieldCustomerFeeEnabled]),
+		ReuseLegacyOrderFeePayment: settingsvalue.ParseBool(normalized[constants.SettingFieldReuseLegacyOrderFeePayment]),
 	}
 }
 

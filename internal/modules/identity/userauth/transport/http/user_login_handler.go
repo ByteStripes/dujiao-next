@@ -70,16 +70,9 @@ type UserLoginRequest struct {
 }
 
 func (h *UserLoginHandler) recordLogin(c *gin.Context, email string, userID uint, status, failReason, source string) {
-	if h == nil || h.recorder == nil || c == nil {
-		return
+	if h != nil {
+		recordLoginEvent(h.recorder, c, email, userID, status, failReason, source)
 	}
-	requestID := ""
-	if rid, ok := c.Get("request_id"); ok {
-		if value, ok := rid.(string); ok {
-			requestID = value
-		}
-	}
-	h.recorder.Record(email, userID, status, failReason, source, c.ClientIP(), c.GetHeader("User-Agent"), requestID)
 }
 
 // UserRegister 用户注册。

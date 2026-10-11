@@ -46,6 +46,16 @@ type LoginRecorder interface {
 	Record(email string, userID uint, status, failReason, source, clientIP, userAgent, requestID string)
 }
 
+// recordLoginEvent 记录一次登录事件（附带客户端 IP、UA 与请求 ID）。
+func recordLoginEvent(recorder LoginRecorder, c *gin.Context, email string, userID uint, status, failReason, source string) {
+	if recorder == nil || c == nil {
+		return
+	}
+	requestID, _ := c.Get("request_id")
+	requestIDText, _ := requestID.(string)
+	recorder.Record(email, userID, status, failReason, source, c.ClientIP(), c.GetHeader("User-Agent"), requestIDText)
+}
+
 // UserTelegramOIDCService 是 Telegram OIDC 端点所需的最小端口。
 type UserTelegramOIDCService interface {
 	StartTelegramOIDC(ctx context.Context, intent string, userID uint) (string, error)
@@ -103,16 +113,9 @@ func respondTelegramOIDCError(c *gin.Context, err error) {
 }
 
 func (h *UserTelegramOIDCHandler) recordLogin(c *gin.Context, email string, userID uint, status, failReason, source string) {
-	if h == nil || h.recorder == nil || c == nil {
-		return
+	if h != nil {
+		recordLoginEvent(h.recorder, c, email, userID, status, failReason, source)
 	}
-	requestID := ""
-	if rid, ok := c.Get("request_id"); ok {
-		if value, ok := rid.(string); ok {
-			requestID = value
-		}
-	}
-	h.recorder.Record(email, userID, status, failReason, source, c.ClientIP(), c.GetHeader("User-Agent"), requestID)
 }
 
 // StartTelegramOIDCLogin 返回 Telegram OIDC 授权 URL（登录流程）。

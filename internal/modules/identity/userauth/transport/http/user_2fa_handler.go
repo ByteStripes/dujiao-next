@@ -101,16 +101,9 @@ func NewUser2FAHandler(totp User2FATOTPService, auth User2FAAuthService, challen
 }
 
 func (h *User2FAHandler) recordLogin(c *gin.Context, email string, userID uint, status, failReason, source string) {
-	if h == nil || h.recorder == nil || c == nil {
-		return
+	if h != nil {
+		recordLoginEvent(h.recorder, c, email, userID, status, failReason, source)
 	}
-	requestID := ""
-	if rid, ok := c.Get("request_id"); ok {
-		if value, ok := rid.(string); ok {
-			requestID = value
-		}
-	}
-	h.recorder.Record(email, userID, status, failReason, source, c.ClientIP(), c.GetHeader("User-Agent"), requestID)
 }
 
 // GetUser2FAStatus 当前用户 2FA 状态。

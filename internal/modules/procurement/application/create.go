@@ -95,7 +95,7 @@ func (s *Service) createProcurementForSingleOrder(order *procurementdomain.Local
 
 	// 入队提交任务
 	if s.queue != nil {
-		if err := s.queue.EnqueueSubmit(procOrder.ID); err != nil {
+		if err := s.queue.EnqueueSubmit(procOrder.ID, 0); err != nil {
 			logger.Warnw("procurement_enqueue_submit_failed",
 				"procurement_order_id", procOrder.ID,
 				"error", err,

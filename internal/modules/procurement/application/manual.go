@@ -40,7 +40,7 @@ func (s *Service) RetryManual(id uint) error {
 	)
 
 	if s.queue != nil {
-		return s.queue.EnqueueSubmit(procOrder.ID)
+		return s.queue.EnqueueSubmit(procOrder.ID, 0)
 	}
 	return nil
 }

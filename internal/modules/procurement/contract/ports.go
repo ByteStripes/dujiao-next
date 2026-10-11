@@ -36,7 +36,7 @@ type ConnectionProvider interface {
 }
 
 type Enqueuer interface {
-	EnqueueSubmit(procurementOrderID uint) error
+	EnqueueSubmit(procurementOrderID uint, delay time.Duration) error
 	EnqueuePoll(procurementOrderID uint, delay time.Duration) error
 }
 

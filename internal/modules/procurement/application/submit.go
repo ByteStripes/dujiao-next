@@ -222,9 +222,11 @@ func (s *Service) handleSubmitFailure(procOrder *procurementdomain.Order, connec
 			"error", errMsg,
 		)
 
-		// 入队重试
+		// 按配置间隔延迟重试：上游超时可能仍在处理首个请求，立即重试会与之并发
 		if s.queue != nil {
-			_ = s.queue.EnqueueSubmit(procOrder.ID)
+			if err := s.queue.EnqueueSubmit(procOrder.ID, delay); err != nil {
+				logger.Warnw("procurement_enqueue_retry_failed", "procurement_order_id", procOrder.ID, "error", err)
+			}
 		}
 
 		return nil

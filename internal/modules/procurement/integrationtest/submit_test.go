@@ -269,3 +269,33 @@ func TestCancelManual_AcceptedKeepsStatusWhenUpstreamRefuses(t *testing.T) {
 		t.Fatalf("expected procurement to stay accepted, got %q", reloaded.Status)
 	}
 }
+
+// 上游以非 200 + 错误码拒单（如余额不足）时按错误码判断，不可重试的直接拒绝，不反复打上游。
+func TestSubmitToUpstream_HTTPErrorWithNonRetryableCode_Rejects(t *testing.T) {
+	db := setupProcurementTestDB(t)
+	order := createProcTestOrder(t, db, "PROC-HTTP402-001", constants.OrderStatusFulfilling, constants.FulfillmentTypeUpstream)
+	pm := &mappingdomain.Mapping{ConnectionID: 1, LocalProductID: 1, UpstreamProductID: 101, IsActive: true}
+	db.Create(pm)
+	db.Create(&mappingdomain.SKUMapping{ProductMappingID: pm.ID, LocalSKUID: 1, UpstreamSKUID: 201, UpstreamIsActive: true})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": "insufficient_balance", "error_message": "balance not enough"})
+	}))
+	defer server.Close()
+
+	connSvc := newTestSiteConnectionService(db, "test-key", t.TempDir())
+	conn, _ := connSvc.Create(siteconnectionapp.CreateInput{
+		Name: "test-upstream", BaseURL: server.URL,
+		ApiKey: "key", ApiSecret: "secret", Protocol: constants.ConnectionProtocolDujiaoNext,
+	})
+	proc := createTestProcurementOrder(t, db, conn.ID, order.ID, order.OrderNo, "pending")
+	_ = newTestProcurementService(db, connSvc).SubmitToUpstream(proc.ID)
+
+	var updated ProcurementOrder
+	db.First(&updated, proc.ID)
+	if updated.Status != constants.ProcurementStatusRejected || updated.RetryCount != 0 {
+		t.Fatalf("expected rejected without retries, got status=%q retry_count=%d", updated.Status, updated.RetryCount)
+	}
+}

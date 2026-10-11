@@ -141,6 +141,12 @@ func (a *DujiaoNextAdapter) GetProduct(ctx context.Context, productID uint) (*Up
 func (a *DujiaoNextAdapter) CreateOrder(ctx context.Context, req CreateUpstreamOrderReq) (*CreateUpstreamOrderResp, error) {
 	var result CreateUpstreamOrderResp
 	if err := a.doRequest(ctx, http.MethodPost, "/api/v1/upstream/orders", req, &result); err != nil {
+		// 上游明确拒绝（非 200 且带错误码，如 insufficient_balance）按业务失败返回，
+		// 由调用方按错误码决定是否重试；网络/超时等无错误码的错误仍按错误返回。
+		var ue *upstreamHTTPError
+		if errors.As(err, &ue) && ue.Code != "" {
+			return &CreateUpstreamOrderResp{OK: false, ErrorCode: ue.Code, ErrorMessage: ue.Message}, nil
+		}
 		return nil, err
 	}
 	return &result, nil

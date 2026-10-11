@@ -108,8 +108,14 @@ func (s *Service) SubmitToUpstream(procurementOrderID uint) error {
 		"retry_count":       0,
 		"updated_at":        now,
 	}
-	if err := s.procRepo.UpdateStatus(procOrder.ID, "accepted", updates); err != nil {
+	accepted, err := s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, constants.ProcurementStatusAccepted, updates)
+	if err != nil {
 		return fmt.Errorf("update procurement status: %w", err)
+	}
+	if !accepted {
+		// 上游回调先于下单响应到达（如秒发卡密），采购单已被推进，不能再回退为 accepted
+		logger.Infow("procurement_accept_skipped_status_changed", "procurement_order_id", procOrder.ID)
+		return nil
 	}
 
 	logger.Infow("procurement_order_accepted",
@@ -118,7 +124,9 @@ func (s *Service) SubmitToUpstream(procurementOrderID uint) error {
 		"upstream_order_no", resp.OrderNo,
 	)
 
-	// 更新本地订单状态为 fulfilling
+	// 更新本地订单状态为 fulfilling。
+	// shortcut: 本地订单写入不做比较后再写，回调恰好落在上一步与这一步之间时仍可能回退为 fulfilling；
+	// 窗口仅两条语句，需要时给订单仓储加带前置状态的更新。
 	_ = s.orderRepo.UpdateStatus(localOrder.ID, constants.OrderStatusFulfilling, map[string]interface{}{
 		"updated_at": now,
 	})
@@ -134,7 +142,7 @@ func (s *Service) SubmitToUpstream(procurementOrderID uint) error {
 // markProcurementError 记录错误信息但不改变状态（用于瞬态错误，asynq 可重试）
 func (s *Service) markProcurementError(procOrder *procurementdomain.Order, errMsg string) {
 	now := time.Now()
-	_ = s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, map[string]interface{}{
+	_, _ = s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, procOrder.Status, map[string]interface{}{
 		"error_message": errMsg,
 		"updated_at":    now,
 	})
@@ -148,10 +156,13 @@ func (s *Service) markProcurementError(procOrder *procurementdomain.Order, errMs
 // 同时回退本地订单状态并通知管理员
 func (s *Service) rejectProcurement(procOrder *procurementdomain.Order, errMsg string) {
 	now := time.Now()
-	_ = s.procRepo.UpdateStatus(procOrder.ID, "rejected", map[string]interface{}{
+	rejected, _ := s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, constants.ProcurementStatusRejected, map[string]interface{}{
 		"error_message": errMsg,
 		"updated_at":    now,
 	})
+	if !rejected {
+		return
+	}
 	logger.Warnw("procurement_rejected_config_error",
 		"procurement_order_id", procOrder.ID,
 		"error", errMsg,
@@ -211,8 +222,12 @@ func (s *Service) handleSubmitFailure(procOrder *procurementdomain.Order, connec
 			"error_message": errMsg,
 			"updated_at":    now,
 		}
-		if err := s.procRepo.UpdateStatus(procOrder.ID, "failed", updates); err != nil {
+		failed, err := s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, constants.ProcurementStatusFailed, updates)
+		if err != nil {
 			return fmt.Errorf("update procurement status (failed): %w", err)
+		}
+		if !failed {
+			return nil
 		}
 
 		logger.Warnw("procurement_submit_failed_retryable",
@@ -237,8 +252,12 @@ func (s *Service) handleSubmitFailure(procOrder *procurementdomain.Order, connec
 		"error_message": errMsg,
 		"updated_at":    now,
 	}
-	if err := s.procRepo.UpdateStatus(procOrder.ID, "rejected", updates); err != nil {
+	rejected, err := s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, constants.ProcurementStatusRejected, updates)
+	if err != nil {
 		return fmt.Errorf("update procurement status (rejected): %w", err)
+	}
+	if !rejected {
+		return nil
 	}
 
 	logger.Warnw("procurement_submit_rejected",

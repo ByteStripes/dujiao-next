@@ -252,7 +252,7 @@ func (s *Service) fillUpstreamRefundRecordsForProcurementOrder(order *procuremen
 		order.Status = targetStatus
 		return
 	}
-	if err := s.procRepo.UpdateStatus(order.ID, targetStatus, map[string]interface{}{"updated_at": time.Now()}); err != nil {
+	if _, err := s.procRepo.UpdateStatus(order.ID, order.Status, targetStatus, map[string]interface{}{"updated_at": time.Now()}); err != nil {
 		logger.Warnw("procurement_sync_refund_status_failed",
 			"procurement_order_id", order.ID,
 			"upstream_order_id", order.UpstreamOrderID,

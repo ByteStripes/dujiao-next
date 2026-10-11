@@ -495,6 +495,7 @@ const (
 	SettingFieldEmailVerificationEnabled    = "email_verification_enabled"
 	SettingFieldEmailDomainAllowlistEnabled = "email_domain_allowlist_enabled"
 	SettingFieldAllowedEmailDomains         = "allowed_email_domains"
+	SettingFieldRegistrationInviteOnly      = "invite_only_enabled"
 
 	SettingKeyOrderRiskControlConfig = "order_risk_control_config"
 

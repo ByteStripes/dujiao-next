@@ -3,6 +3,7 @@ package userauthwiring
 import (
 	"context"
 	"fmt"
+	userauthgormstore "github.com/dujiao-next/internal/modules/identity/userauth/infrastructure/gormstore"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ func TestLoginAdapterBindsTokenToRequestReseller(t *testing.T) {
 	}
 	settings := settingsapp.NewService(settingsstore.New(db))
 	auth := userauthapp.NewService(cfg, userstore.New(db), externalidentitystore.New(db), emailverificationstore.New(db), settings, noopVerifySender{}, nil)
+	auth.SetAuthUnitOfWork(userauthgormstore.New(db))
 	adapter := userLoginTransportAdapter{auth: auth, settings: settings}
 	ctx := resellercontract.WithTenantContext(context.Background(), resellercontract.ResellerTenantContext("shop.example.test", 7, 70, "shop.example.test"))
 
@@ -52,7 +54,7 @@ func TestLoginAdapterBindsTokenToRequestReseller(t *testing.T) {
 			t.Fatalf("%s token must carry rid=7, got claims=%+v err=%v", name, claims, err)
 		}
 	}
-	_, token, _, err := adapter.Register(ctx, "wiring@example.com", "Secret123", "", true, false)
+	_, token, _, err := adapter.Register(ctx, "wiring@example.com", "Secret123", "", "", true, false)
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
 	}

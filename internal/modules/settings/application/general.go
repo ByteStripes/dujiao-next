@@ -279,6 +279,18 @@ func (s *Service) GetRegistrationEnabled(defaultValue bool) (bool, error) {
 	return settingsvalue.ParseBool(raw), nil
 }
 
+// GetRegistrationInviteOnly 获取"仅凭邀请码注册"开关（默认关闭）
+func (s *Service) GetRegistrationInviteOnly() (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	value, err := s.GetByKey(constants.SettingKeyRegistrationConfig)
+	if err != nil || value == nil {
+		return false, err
+	}
+	return settingsvalue.ParseBool(value[constants.SettingFieldRegistrationInviteOnly]), nil
+}
+
 // GetEmailVerificationEnabled 获取邮箱验证开关
 func (s *Service) GetEmailVerificationEnabled(defaultValue bool) (bool, error) {
 	if s == nil {

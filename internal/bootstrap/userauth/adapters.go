@@ -110,8 +110,8 @@ func (a userVerifyTransportAdapter) GetRegistrationEnabled(defaultValue bool) (b
 	return a.settings.GetRegistrationEnabled(defaultValue)
 }
 
-func (a userVerifyTransportAdapter) SendVerifyCode(ctx context.Context, email, purpose, locale string) error {
-	return mapUserAuthTransportError(a.auth.SendVerifyCode(ctx, email, purpose, locale))
+func (a userVerifyTransportAdapter) SendVerifyCode(ctx context.Context, email, purpose, locale, inviteCode string) error {
+	return mapUserAuthTransportError(a.auth.SendVerifyCode(ctx, email, purpose, locale, inviteCode))
 }
 
 // userTelegramTransportAdapter 将用户认证服务适配为 Telegram widget/MiniApp transport 端口。
@@ -271,7 +271,22 @@ func toUserAuthTransportLoginResult(ctx context.Context, auth *userauthapp.Servi
 		ExpiresAt:          result.ExpiresAt,
 		ChallengeToken:     result.ChallengeToken,
 		ChallengeExpiresAt: result.ChallengeExpiresAt,
+		InviteRequired:     result.InviteRequired,
+		InviteTicket:       result.InviteTicket,
 	}, nil
+}
+
+// userInviteTransportAdapter 将第三方登录补填邀请码用例适配为 transport 端口。
+type userInviteTransportAdapter struct {
+	auth *userauthapp.Service
+}
+
+func (a userInviteTransportAdapter) CompleteInviteRegistration(ctx context.Context, ticket, inviteCode string) (*userauthtransport.AuthLoginResult, error) {
+	res, err := a.auth.CompleteInviteRegistration(ctx, ticket, inviteCode)
+	if err != nil {
+		return nil, mapUserAuthTransportError(err)
+	}
+	return toUserAuthTransportLoginResult(ctx, a.auth, res)
 }
 
 func (a userTelegramTransportAdapter) toServicePayload(payload userauthtransport.TelegramAuthPayload) telegramauthapp.LoginPayload {
@@ -394,8 +409,8 @@ func (a userLoginTransportAdapter) GetEmailVerificationEnabled(defaultValue bool
 	return a.settings.GetEmailVerificationEnabled(defaultValue)
 }
 
-func (a userLoginTransportAdapter) Register(ctx context.Context, email, password, code string, agreementAccepted, emailVerificationEnabled bool) (*userdomain.User, string, time.Time, error) {
-	user, token, expiresAt, err := a.auth.Register(email, password, code, agreementAccepted, emailVerificationEnabled)
+func (a userLoginTransportAdapter) Register(ctx context.Context, email, password, code, inviteCode string, agreementAccepted, emailVerificationEnabled bool) (*userdomain.User, string, time.Time, error) {
+	user, token, expiresAt, err := a.auth.Register(email, password, code, inviteCode, agreementAccepted, emailVerificationEnabled)
 	if err != nil {
 		return user, token, expiresAt, mapUserAuthTransportError(err)
 	}
@@ -643,6 +658,9 @@ func mapUserAuthTransportError(err error) error {
 		{userauthapp.ErrGoogleRedirectFlowInvalid, userauthtransport.ErrGoogleRedirectFlowInvalid},
 		{userauthapp.ErrUserDisabled, userauthtransport.ErrUserDisabled},
 		{userauthapp.ErrRegistrationDisabled, userauthtransport.ErrRegistrationDisabled},
+		{userauthapp.ErrInviteCodeRequired, userauthtransport.ErrInviteCodeRequired},
+		{userauthapp.ErrInviteCodeInvalid, userauthtransport.ErrInviteCodeInvalid},
+		{userauthapp.ErrInviteTicketInvalid, userauthtransport.ErrInviteTicketInvalid},
 		{userauthapp.ErrAgreementRequired, userauthtransport.ErrAgreementRequired},
 		{userauthapp.ErrInvalidCredentials, userauthtransport.ErrInvalidCredentials},
 		{userauthapp.ErrEmailNotVerified, userauthtransport.ErrEmailNotVerified},

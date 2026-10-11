@@ -278,6 +278,21 @@ export interface AdminExportGiftCardsPayload {
   format: 'txt' | 'csv'
 }
 
+export interface AdminGenerateInviteCodesPayload {
+  quantity: number
+  code?: string
+  max_uses: number
+  expires_at?: string
+  note?: string
+}
+
+export interface AdminUpdateInviteCodePayload {
+  max_uses?: number
+  expires_at?: string
+  status?: 'active' | 'disabled'
+  note?: string
+}
+
 export interface AdminAffiliateSetting {
   enabled: boolean
   commission_rate: number
@@ -532,6 +547,13 @@ export const adminAPI = {
     api.patch('/admin/gift-cards/batch-status', data),
   exportGiftCards: (data: AdminExportGiftCardsPayload) =>
     api.post('/admin/gift-cards/export', data, { blob: true }),
+  generateInviteCodes: (data: AdminGenerateInviteCodesPayload) =>
+    api.post('/admin/invite-codes/generate', data),
+  getInviteCodes: (params?: Record<string, unknown>) => api.get('/admin/invite-codes', { params }),
+  updateInviteCode: (id: number, data: AdminUpdateInviteCodePayload) => api.put(`/admin/invite-codes/${id}`, data),
+  deleteInviteCode: (id: number) => api.delete(`/admin/invite-codes/${id}`),
+  getInviteCodeUsers: (id: number, params?: Record<string, unknown>) =>
+    api.get(`/admin/invite-codes/${id}/users`, { params }),
   createPromotion: (data: Partial<AdminPromotion>) => api.post('/admin/promotions', data),
   getPromotions: (params?: Record<string, unknown>) => api.get('/admin/promotions', { params }),
   updatePromotion: (id: number, data: Partial<AdminPromotion>) => api.put(`/admin/promotions/${id}`, data),

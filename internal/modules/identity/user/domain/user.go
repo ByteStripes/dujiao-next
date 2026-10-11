@@ -30,6 +30,7 @@ type User struct {
 	RecoveryCodes         string       `gorm:"type:text;default:''" json:"-"`                                // jsonmap.JSON 数组：[{"hash":"...","used_at":null|"..."}]
 	EmailVerifiedAt       *time.Time   `json:"email_verified_at"`                                            // 邮箱验证时间
 	LastLoginAt           *time.Time   `json:"last_login_at"`                                                // 最后登录时间
+	InviteCodeID          *uint        `gorm:"index" json:"invite_code_id,omitempty"`                        // 注册时核销的邀请码
 	CreatedAt             time.Time    `gorm:"index" json:"created_at"`                                      // 创建时间
 	UpdatedAt             time.Time    `gorm:"index" json:"updated_at"`                                      // 更新时间
 	DeletedAt             *time.Time   `gorm:"index" json:"-"`                                               // 软删除时间

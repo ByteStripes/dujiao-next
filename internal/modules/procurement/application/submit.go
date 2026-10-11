@@ -49,6 +49,11 @@ func (s *Service) SubmitToUpstream(procurementOrderID uint) error {
 		s.rejectProcurement(procOrder, fmt.Sprintf("local order %d not found", procOrder.LocalOrderID))
 		return nil // 永久性错误，不重试
 	}
+	// 本地订单已退款/取消等不再需要采购（如巡检补投的历史积压单），不能再去上游扣款
+	if localOrder.Status != constants.OrderStatusPaid && localOrder.Status != constants.OrderStatusFulfilling {
+		s.rejectProcurement(procOrder, fmt.Sprintf("local order %d status %s no longer needs procurement", localOrder.ID, localOrder.Status))
+		return nil // 永久性错误，不重试
+	}
 	if len(localOrder.Items) == 0 {
 		s.rejectProcurement(procOrder, fmt.Sprintf("local order %d has no items", localOrder.ID))
 		return nil // 永久性错误，不重试

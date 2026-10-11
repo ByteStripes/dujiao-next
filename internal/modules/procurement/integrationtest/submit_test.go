@@ -299,3 +299,36 @@ func TestSubmitToUpstream_HTTPErrorWithNonRetryableCode_Rejects(t *testing.T) {
 		t.Fatalf("expected rejected without retries, got status=%q retry_count=%d", updated.Status, updated.RetryCount)
 	}
 }
+
+// 本地订单已退款时（如巡检补投历史积压单），不能再去上游下单扣款。
+func TestSubmitToUpstream_LocalOrderRefunded_RejectsWithoutCallingUpstream(t *testing.T) {
+	db := setupProcurementTestDB(t)
+	order := createProcTestOrder(t, db, "PROC-REFUNDED-001", constants.OrderStatusRefunded, constants.FulfillmentTypeUpstream)
+	pm := &mappingdomain.Mapping{ConnectionID: 1, LocalProductID: 1, UpstreamProductID: 101, IsActive: true}
+	db.Create(pm)
+	db.Create(&mappingdomain.SKUMapping{ProductMappingID: pm.ID, LocalSKUID: 1, UpstreamSKUID: 201, UpstreamIsActive: true})
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "order_id": 999, "order_no": "UP-999"})
+	}))
+	defer server.Close()
+
+	connSvc := newTestSiteConnectionService(db, "test-key", t.TempDir())
+	conn, _ := connSvc.Create(siteconnectionapp.CreateInput{
+		Name: "test-upstream", BaseURL: server.URL,
+		ApiKey: "key", ApiSecret: "secret", Protocol: constants.ConnectionProtocolDujiaoNext,
+	})
+	proc := createTestProcurementOrder(t, db, conn.ID, order.ID, order.OrderNo, "failed")
+	if err := newTestProcurementService(db, connSvc).SubmitToUpstream(proc.ID); err != nil {
+		t.Fatalf("SubmitToUpstream: %v", err)
+	}
+
+	var updated ProcurementOrder
+	db.First(&updated, proc.ID)
+	if called || updated.Status != constants.ProcurementStatusRejected {
+		t.Fatalf("expected rejected without upstream call, got called=%v status=%q", called, updated.Status)
+	}
+}

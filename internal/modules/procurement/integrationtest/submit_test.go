@@ -235,3 +235,37 @@ func TestHandleSubmitFailure_MaxRetriesExhausted(t *testing.T) {
 		t.Errorf("expected order status %q, got %q", constants.OrderStatusPaid, updatedOrder.Status)
 	}
 }
+
+func TestCancelManual_AcceptedKeepsStatusWhenUpstreamRefuses(t *testing.T) {
+	db := setupProcurementTestDB(t)
+	order := createProcTestOrder(t, db, "PROC-CANCEL-001", constants.OrderStatusFulfilling, constants.FulfillmentTypeUpstream)
+
+	// 上游已支付的订单不允许取消
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": "cancel_not_allowed"})
+	}))
+	defer server.Close()
+
+	connSvc := newTestSiteConnectionService(db, "test-key", t.TempDir())
+	conn, err := connSvc.Create(siteconnectionapp.CreateInput{
+		Name: "test-upstream", BaseURL: server.URL, ApiKey: "key", ApiSecret: "secret",
+		Protocol: constants.ConnectionProtocolDujiaoNext,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	proc := createTestProcurementOrder(t, db, conn.ID, order.ID, order.OrderNo, constants.ProcurementStatusAccepted)
+	db.Model(proc).Update("upstream_order_id", 999)
+
+	svc := newTestProcurementService(db, connSvc)
+	if err := svc.CancelManual(proc.ID); err == nil {
+		t.Fatal("expected cancel to fail when upstream refuses")
+	}
+	var reloaded ProcurementOrder
+	db.First(&reloaded, proc.ID)
+	if reloaded.Status != constants.ProcurementStatusAccepted {
+		t.Fatalf("expected procurement to stay accepted, got %q", reloaded.Status)
+	}
+}

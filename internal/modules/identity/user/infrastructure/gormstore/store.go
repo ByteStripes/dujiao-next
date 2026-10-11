@@ -2,6 +2,7 @@ package userstore
 
 import (
 	"errors"
+	"github.com/dujiao-next/internal/persistence/gormutil"
 	"strings"
 	"time"
 
@@ -160,7 +161,7 @@ func (r *Store) List(filter usercontract.ListFilter) ([]userdomain.User, int64, 
 		return nil, 0, err
 	}
 
-	query = applyPagination(query, filter.Page, filter.PageSize)
+	query = gormutil.ApplyPagination(query, filter.Page, filter.PageSize)
 	query = applyUserSort(query, filter.SortBy, filter.SortOrder)
 
 	var users []userdomain.User
@@ -277,14 +278,4 @@ func (r *Store) ClearTOTP(userID uint) error {
 		"token_version":           gorm.Expr("token_version + 1"),
 		"token_invalid_before":    now,
 	}).Error
-}
-
-func applyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
-	if query == nil || pageSize <= 0 {
-		return query
-	}
-	if page < 1 {
-		page = 1
-	}
-	return query.Offset((page - 1) * pageSize).Limit(pageSize)
 }

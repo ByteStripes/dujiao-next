@@ -273,9 +273,10 @@ func TestProductStoreSoftDeleteHidesProductAndRejectsStockMutations(t *testing.T
 	if total != 0 || len(rows) != 0 {
 		t.Fatalf("soft-deleted product must be absent from list, total=%d rows=%#v", total, rows)
 	}
+	// 唯一索引仍约束已删除商品，slug 查重必须把它算进去
 	count, err := repo.CountBySlug(product.Slug, nil)
-	if err != nil || count != 0 {
-		t.Fatalf("soft-deleted product must be absent from slug count, count=%d err=%v", count, err)
+	if err != nil || count != 1 {
+		t.Fatalf("soft-deleted product must still occupy its slug, count=%d err=%v", count, err)
 	}
 
 	for operation, mutate := range map[string]func() (int64, error){

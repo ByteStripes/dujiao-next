@@ -30,7 +30,8 @@ func (s *OrderService) cancelOrderWithChildren(order *orderdomain.Order, rollbac
 		if locked == nil {
 			return ErrOrderNotFound
 		}
-		if locked.Status != order.Status {
+		// 只有未支付订单可以取消：已支付订单取消会退回钱包、释放已消耗库存，必须走退款流程
+		if locked.Status != order.Status || locked.Status != constants.OrderStatusPendingPayment {
 			return ErrOrderCancelNotAllowed
 		}
 		updates := map[string]interface{}{
@@ -181,6 +182,9 @@ func (s *OrderService) UpdateOrderStatus(orderID uint, targetStatus string) (*or
 	if isParent {
 		switch target {
 		case constants.OrderStatusCanceled:
+			if order.Status != constants.OrderStatusPendingPayment {
+				return nil, ErrOrderStatusInvalid
+			}
 			if err := s.cancelOrderWithChildren(order, true); err != nil {
 				return nil, ErrOrderUpdateFailed
 			}

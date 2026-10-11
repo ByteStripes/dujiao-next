@@ -159,3 +159,26 @@ func TestSendVerifyCodePropagatesRequestTenantBrandToSender(t *testing.T) {
 		t.Fatalf("resolved brand did not reach sender: %+v", sender.brand)
 	}
 }
+
+type toggleVerificationEmailSender struct{ fail bool }
+
+func (s *toggleVerificationEmailSender) SendVerifyCode(_, _, _, _ string, _ mailbrand.Brand) error {
+	if s.fail {
+		return errors.New("smtp timeout")
+	}
+	return nil
+}
+
+// 邮件没发出去时，验证码不能占用发送间隔，用户应能立即重发。
+func TestSendVerifyCodeFailedSendDoesNotBlockResend(t *testing.T) {
+	sender := &toggleVerificationEmailSender{fail: true}
+	svc, _, _ := newRegistrationDomainPolicyAuthServiceWithSender(t, sender)
+
+	if err := svc.SendVerifyCode(context.Background(), "resend@example.com", constants.VerifyPurposeRegister, constants.LocaleZhCN); err == nil {
+		t.Fatal("expected send failure")
+	}
+	sender.fail = false
+	if err := svc.SendVerifyCode(context.Background(), "resend@example.com", constants.VerifyPurposeRegister, constants.LocaleZhCN); err != nil {
+		t.Fatalf("resend after failed send should succeed, got %v", err)
+	}
+}

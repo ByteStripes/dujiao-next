@@ -568,11 +568,17 @@ func (s *Service) sendVerifyCode(ctx context.Context, email, purpose, locale str
 		SentAt:    now,
 		CreatedAt: now,
 	}
-	// 先落库再发信：落库即占用发送间隔，并发请求无法同时通过间隔检查各发一封。
+	// 先落库再发信：落库即占用发送间隔，挡住连续重复请求。
+	// shortcut: 查最新记录与落库之间仍有空窗，并发请求可各发一封；出现邮件轰炸再加 Redis SETNX(email+purpose) 锁。
 	if err := s.codeRepo.Create(record); err != nil {
 		return err
 	}
-	return s.emailService.SendVerifyCode(email, code, purpose, locale, brand)
+	if err := s.emailService.SendVerifyCode(email, code, purpose, locale, brand); err != nil {
+		// 未送达的验证码不能占用发送间隔，也不能顶替用户手里仍有效的上一封；删除失败只退回旧行为，不掩盖发信错误
+		_ = s.codeRepo.Delete(record.ID)
+		return err
+	}
+	return nil
 }
 
 func normalizeEmail(email string) (string, error) {

@@ -41,6 +41,12 @@ func (store *Store) MarkVerified(id uint, verifiedAt time.Time) (bool, error) {
 	return result.RowsAffected == 1, result.Error
 }
 
+func (store *Store) Delete(id uint) error {
+	return store.db.Model(&emailverificationdomain.Code{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Update("deleted_at", time.Now()).Error
+}
+
 func (store *Store) ReserveAttempt(id uint, maxAttempts int) (bool, error) {
 	query := store.db.Model(&emailverificationdomain.Code{}).
 		Where("id = ? AND deleted_at IS NULL AND verified_at IS NULL", id)

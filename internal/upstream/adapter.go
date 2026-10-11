@@ -54,6 +54,7 @@ type ProductListResult struct {
 // UpstreamProduct 上游商品信息
 type UpstreamProduct struct {
 	ID               uint                              `json:"id"`
+	Slug             string                            `json:"slug"`
 	SeoMeta          jsonmap.JSON                      `json:"seo_meta"`
 	Title            jsonmap.JSON                      `json:"title"`
 	Description      jsonmap.JSON                      `json:"description"`

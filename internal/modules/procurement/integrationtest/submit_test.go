@@ -2,6 +2,7 @@ package procurement_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	mappingdomain "github.com/dujiao-next/internal/modules/catalog/mapping/domain"
 
 	"github.com/dujiao-next/internal/constants"
+	procurementcontract "github.com/dujiao-next/internal/modules/procurement/contract"
 	siteconnectionapp "github.com/dujiao-next/internal/modules/siteconnection/application"
 )
 
@@ -243,7 +245,7 @@ func TestCancelManual_AcceptedKeepsStatusWhenUpstreamRefuses(t *testing.T) {
 	// 上游已支付的订单不允许取消
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": "cancel_not_allowed"})
 	}))
 	defer server.Close()
@@ -260,8 +262,8 @@ func TestCancelManual_AcceptedKeepsStatusWhenUpstreamRefuses(t *testing.T) {
 	db.Model(proc).Update("upstream_order_id", 999)
 
 	svc := newTestProcurementService(db, connSvc)
-	if err := svc.CancelManual(proc.ID); err == nil {
-		t.Fatal("expected cancel to fail when upstream refuses")
+	if err := svc.CancelManual(proc.ID); !errors.Is(err, procurementcontract.ErrUpstreamCancelRefused) {
+		t.Fatalf("expected ErrUpstreamCancelRefused, got %v", err)
 	}
 	var reloaded ProcurementOrder
 	db.First(&reloaded, proc.ID)

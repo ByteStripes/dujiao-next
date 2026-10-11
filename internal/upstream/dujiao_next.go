@@ -171,6 +171,10 @@ func (a *DujiaoNextAdapter) CancelOrder(ctx context.Context, orderID uint) error
 		OK bool `json:"ok"`
 	}
 	if err := a.doRequest(ctx, http.MethodPost, path, nil, &result); err != nil {
+		var ue *upstreamHTTPError
+		if errors.As(err, &ue) && ue.Code == "cancel_not_allowed" {
+			return fmt.Errorf("%w: %s", ErrUpstreamCancelNotAllowed, ue.Message)
+		}
 		return err
 	}
 	if !result.OK {

@@ -12,6 +12,11 @@ import (
 	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 
 	"github.com/dujiao-next/internal/constants"
+	ordergormstore "github.com/dujiao-next/internal/modules/order/infrastructure/gormstore"
+	procurementapp "github.com/dujiao-next/internal/modules/procurement/application"
+	procurementgormstore "github.com/dujiao-next/internal/modules/procurement/infrastructure/gormstore"
+	procurementorder "github.com/dujiao-next/internal/modules/procurement/infrastructure/orderreader"
+	procurementupstream "github.com/dujiao-next/internal/modules/procurement/infrastructure/upstreamgateway"
 	siteconnectionapp "github.com/dujiao-next/internal/modules/siteconnection/application"
 )
 
@@ -156,5 +161,34 @@ func TestSyncAcceptedOrders_WalksAllPages(t *testing.T) {
 	newTestProcurementService(db, connSvc).SyncAcceptedOrders()
 	if got := calls.Load(); got != total {
 		t.Fatalf("expected %d upstream checks, got %d", total, got)
+	}
+}
+
+type recordingEnqueuer struct{ submitted []uint }
+
+func (r *recordingEnqueuer) EnqueueSubmit(id uint, _ time.Duration) error {
+	r.submitted = append(r.submitted, id)
+	return nil
+}
+func (r *recordingEnqueuer) EnqueuePoll(uint, time.Duration) error { return nil }
+
+// 入队失败（如 Redis 重启）留下的 pending 采购单必须被巡检补投，否则订单永远不发货。
+func TestSyncAcceptedOrders_RequeuesStalledSubmissions(t *testing.T) {
+	db := setupProcurementTestDB(t)
+	order := createProcTestOrder(t, db, "PROC-STALLED-001", constants.OrderStatusPaid, constants.FulfillmentTypeUpstream)
+	stalled := createTestProcurementOrder(t, db, 1, order.ID, order.OrderNo, constants.ProcurementStatusPending)
+	db.Model(stalled).UpdateColumn("updated_at", time.Now().Add(-time.Hour))
+	fresh := createTestProcurementOrder(t, db, 1, order.ID+1, "PROC-STALLED-002", constants.ProcurementStatusPending)
+
+	queue := &recordingEnqueuer{}
+	svc := procurementapp.NewService(procurementapp.Options{
+		Repository:  procurementgormstore.New(db),
+		Orders:      procurementorder.New(ordergormstore.New(db, "test-guest-credential-secret-with-32-bytes")),
+		Connections: procurementupstream.New(newTestSiteConnectionService(db, "test-key", t.TempDir())),
+		Queue:       queue,
+	})
+	svc.SyncAcceptedOrders()
+	if len(queue.submitted) != 1 || queue.submitted[0] != stalled.ID {
+		t.Fatalf("expected only stalled procurement %d requeued (fresh %d skipped), got %v", stalled.ID, fresh.ID, queue.submitted)
 	}
 }

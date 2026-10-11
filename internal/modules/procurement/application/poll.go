@@ -114,6 +114,7 @@ func (s *Service) SyncAcceptedOrders() {
 	if claimed, err := cache.SetNX(ctx, "procurement:sync_accepted_period", "1", 25*time.Minute); err == nil && !claimed {
 		return
 	}
+	s.requeueStalledSubmissions()
 
 	const pageSize = 200
 	for page := 1; ; page++ {
@@ -135,6 +136,44 @@ func (s *Service) SyncAcceptedOrders() {
 		// 本轮被推进出 accepted 的单会让后续分页前移、少看几条，由下一周期补上
 		if len(orders) < pageSize || int64(page*pageSize) >= total {
 			return
+		}
+	}
+}
+
+// stalledSubmissionGrace 提交任务应执行时间之后多久仍未推进，视为任务丢失（入队失败、Redis 重启等）。
+const stalledSubmissionGrace = 15 * time.Minute
+
+// requeueStalledSubmissions 为停滞的 pending / failed 采购单补投提交任务，否则对应订单会永远不发货。
+func (s *Service) requeueStalledSubmissions() {
+	if s.queue == nil {
+		return
+	}
+	cutoff := time.Now().Add(-stalledSubmissionGrace)
+	const pageSize = 200
+	for _, status := range []string{constants.ProcurementStatusPending, constants.ProcurementStatusFailed} {
+		for page := 1; ; page++ {
+			orders, total, err := s.procRepo.List(procurementcontract.ListFilter{Status: status, Page: page, PageSize: pageSize})
+			if err != nil {
+				logger.Warnw("procurement_requeue_stalled_list_failed", "status", status, "error", err)
+				break
+			}
+			for i := range orders {
+				dueAt := orders[i].UpdatedAt
+				if orders[i].NextRetryAt != nil {
+					dueAt = *orders[i].NextRetryAt
+				}
+				if dueAt.After(cutoff) {
+					continue
+				}
+				if err := s.queue.EnqueueSubmit(orders[i].ID, 0); err != nil {
+					logger.Warnw("procurement_requeue_stalled_failed", "procurement_order_id", orders[i].ID, "error", err)
+					continue
+				}
+				logger.Infow("procurement_requeue_stalled", "procurement_order_id", orders[i].ID, "status", status)
+			}
+			if len(orders) < pageSize || int64(page*pageSize) >= total {
+				break
+			}
 		}
 	}
 }

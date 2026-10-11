@@ -352,6 +352,8 @@ export const adminAPI = {
   deleteProduct: (id: number) => api.delete(`/admin/products/${id}`),
   batchUpdateProductStatus: (ids: number[], isActive: boolean) => api.post('/admin/products/batch-status', { ids, is_active: isActive }),
   batchUpdateProductCategory: (ids: number[], categoryId: number) => api.post('/admin/products/batch-category', { ids, category_id: categoryId }),
+  batchUpdateProductStockDisplay: (ids: number[], stockDisplayMode: string) =>
+    api.post('/admin/products/batch-stock-display', { ids, stock_display_mode: stockDisplayMode }),
   batchDeleteProducts: (ids: number[]) => api.post('/admin/products/batch-delete', { ids }),
   getCategories: (params?: Record<string, unknown>) => api.get('/admin/categories', { params }),
   createCategory: (data: Partial<AdminCategory>) => api.post('/admin/categories', data),

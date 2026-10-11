@@ -111,7 +111,23 @@ type UserJWTClaims struct {
 	Email        string `json:"email"`
 	TokenVersion uint64 `json:"token_version"`
 	Typ          string `json:"typ,omitempty"`
+	// ResellerID 签发时所在的分销站点（主站为 0）。令牌只在同一站点有效，
+	// 防止分销商在自己的域名上截获的令牌被拿到主站或其他分销站使用。
+	ResellerID uint `json:"rid,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// BindUserTokenTenant 将访问令牌绑定到签发请求所在的分销站点；主站（resellerID=0）原样返回。
+func (s *Service) BindUserTokenTenant(tokenString string, resellerID uint) (string, error) {
+	if resellerID == 0 || tokenString == "" {
+		return tokenString, nil
+	}
+	claims, err := s.ParseUserJWT(tokenString)
+	if err != nil {
+		return "", err
+	}
+	claims.ResellerID = resellerID
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.cfg.UserJWT.SecretKey))
 }
 
 // UserChallengeClaims 用户 2FA 挑战 token claims

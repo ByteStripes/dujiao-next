@@ -78,7 +78,7 @@ type User2FATOTPService interface {
 // User2FAAuthService 是 2FA 登录完成端口。
 type User2FAAuthService interface {
 	ParseUserChallengeToken(tokenString string) (*UserChallengeClaims, error)
-	CompleteLoginAfter2FA(userID uint, rememberMe bool) (*AuthLoginResult, error)
+	CompleteLoginAfter2FA(ctx context.Context, userID uint, rememberMe bool) (*AuthLoginResult, error)
 	GetUserEmail(userID uint) (string, error)
 }
 
@@ -180,7 +180,7 @@ func (h *User2FAHandler) EnableUser2FA(c *gin.Context) {
 		}
 		return
 	}
-	loginRes, signErr := h.auth.CompleteLoginAfter2FA(uid, false)
+	loginRes, signErr := h.auth.CompleteLoginAfter2FA(c.Request.Context(), uid, false)
 	if signErr == nil && loginRes != nil {
 		res.Token = loginRes.Token
 		res.ExpiresAt = loginRes.ExpiresAt
@@ -329,7 +329,7 @@ func (h *User2FAHandler) VerifyUser2FA(c *gin.Context) {
 	if h.challenges != nil {
 		h.challenges.Revoke(ctx, claims.JTI)
 	}
-	loginRes, err := h.auth.CompleteLoginAfter2FA(claims.UserID, claims.RememberMe)
+	loginRes, err := h.auth.CompleteLoginAfter2FA(c.Request.Context(), claims.UserID, claims.RememberMe)
 	if err != nil {
 		ginutil.RespondError(c, response.CodeInternal, "error.login_failed", err)
 		return

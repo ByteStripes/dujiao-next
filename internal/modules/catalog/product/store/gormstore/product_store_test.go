@@ -709,3 +709,45 @@ func TestProductRepositoryListOnlyActiveTakesPrecedenceOverIsActive(t *testing.T
 		t.Fatalf("OnlyActive should win over IsActive, got %+v", got)
 	}
 }
+
+// 增量同步的 updated_after 必须能看到 SKU 库存与卡密变化，它们不会改动商品行本身。
+func TestProductRepositoryListUpdatedAfterIncludesStockChanges(t *testing.T) {
+	repo, db := setupProductStoreTest(t)
+	old := time.Now().Add(-2 * time.Hour)
+	mk := func(slug string) *productdomain.Product {
+		p := createManualProduct(t, repo, slug, 10, 0, 0)
+		sku := productdomain.ProductSKU{ProductID: p.ID, SKUCode: "DEFAULT", PriceAmount: money.FromDecimal(decimal.NewFromInt(1)), ManualStockTotal: 10, IsActive: true}
+		if err := db.Create(&sku).Error; err != nil {
+			t.Fatalf("create sku failed: %v", err)
+		}
+		db.Model(&productdomain.Product{}).Where("id = ?", p.ID).UpdateColumn("updated_at", old)
+		db.Model(&productdomain.ProductSKU{}).Where("product_id = ?", p.ID).UpdateColumn("updated_at", old)
+		return p
+	}
+	skuChanged := mk("updated-after-sku")
+	cardChanged := mk("updated-after-card")
+	untouched := mk("updated-after-untouched")
+
+	var sku productdomain.ProductSKU
+	db.Where("product_id = ?", skuChanged.ID).First(&sku)
+	if _, err := NewSKUStore(db).ReserveManualStock(sku.ID, 1); err != nil {
+		t.Fatalf("reserve sku stock failed: %v", err)
+	}
+	secret := cardsecretdomain.Secret{ProductID: cardChanged.ID, SKUID: 1, Secret: "S", Status: cardsecretdomain.StatusAvailable}
+	if err := db.Create(&secret).Error; err != nil {
+		t.Fatalf("create card secret failed: %v", err)
+	}
+
+	after := time.Now().Add(-time.Hour)
+	rows, _, err := repo.List(productcontract.ListFilter{Page: 1, PageSize: 20, UpdatedAfter: &after})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	got := map[uint]bool{}
+	for _, row := range rows {
+		got[row.ID] = true
+	}
+	if !got[skuChanged.ID] || !got[cardChanged.ID] || got[untouched.ID] {
+		t.Fatalf("unexpected incremental rows: sku=%v card=%v untouched=%v", got[skuChanged.ID], got[cardChanged.ID], got[untouched.ID])
+	}
+}

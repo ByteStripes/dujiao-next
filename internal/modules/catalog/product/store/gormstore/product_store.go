@@ -94,7 +94,13 @@ func (r *ProductStore) List(filter productcontract.ListFilter) ([]productdomain.
 	}
 
 	if filter.UpdatedAfter != nil {
-		query = query.Where("updated_at > ?", *filter.UpdatedAfter)
+		// 库存变化落在 SKU（人工库存预占/售出）与卡密行上，不会改动商品行本身；
+		// 下游增量同步依赖此过滤，需一并纳入，否则库存变化要等每日全量同步才可见。
+		after := *filter.UpdatedAfter
+		query = query.Where("(products.updated_at > ? OR "+
+			"EXISTS (SELECT 1 FROM product_skus ps WHERE ps.product_id = products.id AND ps.updated_at > ?) OR "+
+			"EXISTS (SELECT 1 FROM card_secrets cs WHERE cs.product_id = products.id AND cs.updated_at > ?))",
+			after, after, after)
 	}
 
 	stockStatus := strings.ToLower(strings.TrimSpace(filter.StockStatus))

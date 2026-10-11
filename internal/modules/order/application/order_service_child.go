@@ -281,6 +281,11 @@ func (s *OrderService) UpdateOrderStatus(orderID uint, targetStatus string) (*or
 	if !IsTransitionAllowed(order.Status, target) {
 		return nil, ErrOrderStatusInvalid
 	}
+	// 子订单不能单独取消：父订单的钱包扣款与优惠券不会随之回滚，
+	// 且父订单后续支付会把已取消的子订单重新置为已支付。取消须针对父订单。
+	if target == constants.OrderStatusCanceled && order.ParentID != nil {
+		return nil, ErrOrderStatusInvalid
+	}
 
 	now := time.Now()
 	updates := map[string]interface{}{

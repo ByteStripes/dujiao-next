@@ -370,3 +370,27 @@ func TestUpdateOrderStatusRejectsCancelingPaidParent(t *testing.T) {
 		t.Fatalf("paid parent status mutated to %s", stored.Status)
 	}
 }
+
+func TestUpdateOrderStatusRejectsCancelingChildOrder(t *testing.T) {
+	dsn := fmt.Sprintf("file:order_service_reject_cancel_child_%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	if err := db.AutoMigrate(&orderdomain.Order{}, &orderdomain.OrderItem{}, &fulfillmentdomain.Fulfillment{}); err != nil {
+		t.Fatalf("auto migrate failed: %v", err)
+	}
+	now := time.Now()
+	parent := &orderdomain.Order{OrderNo: "CHILD-CANCEL-PARENT", Status: constants.OrderStatusPendingPayment, Currency: "CNY", CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(parent).Error; err != nil {
+		t.Fatalf("create parent failed: %v", err)
+	}
+	child := &orderdomain.Order{OrderNo: "CHILD-CANCEL-PARENT-A", ParentID: &parent.ID, Status: constants.OrderStatusPendingPayment, Currency: "CNY", CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(child).Error; err != nil {
+		t.Fatalf("create child failed: %v", err)
+	}
+	svc := NewOrderService(OrderServiceOptions{OrderStore: ordergormstore.New(db, "test-guest-credential-secret-with-32-bytes")})
+	if _, err := svc.UpdateOrderStatus(child.ID, constants.OrderStatusCanceled); err != ErrOrderStatusInvalid {
+		t.Fatalf("cancel child error = %v, want %v", err, ErrOrderStatusInvalid)
+	}
+}

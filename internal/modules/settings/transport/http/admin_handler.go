@@ -113,3 +113,34 @@ func (h *AdminHandler) Update(c *gin.Context) {
 	}
 	response.Success(c, result.Value)
 }
+
+// respondSecuritySetting 返回脱敏后的安全类设置（验证码 / Google / Telegram 登录）。
+func respondSecuritySetting[S any, M any](c *gin.Context, get func() (S, error), mask func(S) M) {
+	setting, err := get()
+	if err != nil {
+		ginutil.RespondError(c, response.CodeInternal, "error.settings_fetch_failed", err)
+		return
+	}
+	response.Success(c, mask(setting))
+}
+
+// updateSecuritySetting 校验并保存安全类设置，随后热更新运行时并清公共配置缓存。
+func updateSecuritySetting[P any, S any, M any](c *gin.Context, patch func(P) (S, error), apply func(S), mask func(S) M, invalid error) {
+	var req P
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.RespondBindError(c, err)
+		return
+	}
+	setting, err := patch(req)
+	if err != nil {
+		if errors.Is(err, invalid) {
+			ginutil.RespondErrorWithMsg(c, response.CodeBadRequest, err.Error(), nil)
+			return
+		}
+		ginutil.RespondError(c, response.CodeInternal, "error.settings_save_failed", err)
+		return
+	}
+	apply(setting)
+	_ = cache.DelAllPublicConfig(c.Request.Context())
+	response.Success(c, mask(setting))
+}

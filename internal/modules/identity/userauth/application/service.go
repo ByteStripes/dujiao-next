@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"github.com/dujiao-next/internal/telegramidentity"
@@ -495,18 +496,25 @@ func (s *Service) verifyCode(email, purpose, code string) (*emailverificationdom
 		return nil, ErrVerifyCodeExpired
 	}
 
-	maxAttempts := resolveMaxAttempts(s.cfg.Email.VerifyCode)
-	if maxAttempts > 0 && record.AttemptCount >= maxAttempts {
+	// 先原子占用一次尝试机会再比对：并发猜测请求无法共享同一个"剩余次数"。
+	reserved, err := s.codeRepo.ReserveAttempt(record.ID, resolveMaxAttempts(s.cfg.Email.VerifyCode))
+	if err != nil {
+		return nil, err
+	}
+	if !reserved {
 		return nil, ErrVerifyCodeAttemptsExceeded
 	}
 
-	if strings.TrimSpace(record.Code) != strings.TrimSpace(code) {
-		_ = s.codeRepo.IncrementAttempt(record.ID)
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(record.Code)), []byte(strings.TrimSpace(code))) != 1 {
 		return nil, ErrVerifyCodeInvalid
 	}
 
-	if err := s.codeRepo.MarkVerified(record.ID, now); err != nil {
+	marked, err := s.codeRepo.MarkVerified(record.ID, now)
+	if err != nil {
 		return nil, err
+	}
+	if !marked {
+		return nil, ErrVerifyCodeInvalid
 	}
 	return record, nil
 }
@@ -544,15 +552,11 @@ func (s *Service) sendVerifyCode(ctx context.Context, email, purpose, locale str
 		SentAt:    now,
 		CreatedAt: now,
 	}
-	if err := s.emailService.SendVerifyCode(email, code, purpose, locale, brand); err != nil {
-		return err
-	}
-
+	// 先落库再发信：落库即占用发送间隔，并发请求无法同时通过间隔检查各发一封。
 	if err := s.codeRepo.Create(record); err != nil {
 		return err
 	}
-
-	return nil
+	return s.emailService.SendVerifyCode(email, code, purpose, locale, brand)
 }
 
 func normalizeEmail(email string) (string, error) {

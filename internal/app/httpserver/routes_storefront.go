@@ -99,17 +99,23 @@ func registerStorefrontRoutes(
 		paymenttransport.RegisterGuestWriteRoutes(guestWrite, paymentWriteHandler)
 	}
 
+	// 注册 / 忘记密码 / 发送验证码：沿用登录限流参数，独立计数并使用通用提示
+	authRule := loginRule
+	authRule.Prefix += ":auth"
+	authRule.MessageKey = "error.rate_limited"
+	authRateLimit := middleware.RateLimitMiddleware(redisClient, authRule, middleware.KeyByIP)
+
 	// 用户认证接口
 	auth := storefront.Group("/auth")
 	{
-		userauthtransport.RegisterUserVerifyAuthRoutes(auth, userVerifyHandler)
-		userauthtransport.RegisterUserRegisterAuthRoutes(auth, userLoginHandler)
+		userauthtransport.RegisterUserVerifyAuthRoutes(auth, userVerifyHandler, authRateLimit)
+		userauthtransport.RegisterUserRegisterAuthRoutes(auth, userLoginHandler, authRateLimit)
 		userauthtransport.RegisterUserLoginAuthRoutes(auth, userLoginHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIPAndJSONField("email")))
 		userauthtransport.RegisterUser2FAAuthRoutes(auth, user2FAHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))
 		userauthtransport.RegisterUserTelegramAuthRoutes(auth, userTelegramHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))
 		userauthtransport.RegisterUserTelegramOIDCAuthRoutes(auth, userTelegramOIDCHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))
 		userauthtransport.RegisterUserGoogleAuthRoutes(auth, userGoogleHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))
-		userauthtransport.RegisterUserPasswordAuthRoutes(auth, userPasswordHandler)
+		userauthtransport.RegisterUserPasswordAuthRoutes(auth, userPasswordHandler, authRateLimit)
 	}
 
 	// 用户接口（需鉴权）

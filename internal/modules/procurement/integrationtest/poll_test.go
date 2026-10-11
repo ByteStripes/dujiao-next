@@ -2,8 +2,10 @@ package procurement_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,5 +125,36 @@ func TestPollUpstreamStatus_FulfilledMappedToDelivered(t *testing.T) {
 	db.First(&updatedOrder, order.ID)
 	if updatedOrder.Status != constants.OrderStatusDelivered {
 		t.Errorf("expected order status %q, got %q", constants.OrderStatusDelivered, updatedOrder.Status)
+	}
+}
+
+// 巡检必须覆盖全部 accepted 采购单，而不是只看最新的一页。
+func TestSyncAcceptedOrders_WalksAllPages(t *testing.T) {
+	db := setupProcurementTestDB(t)
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": "processing"})
+	}))
+	defer server.Close()
+
+	connSvc := newTestSiteConnectionService(db, "test-key", t.TempDir())
+	conn, err := connSvc.Create(siteconnectionapp.CreateInput{
+		Name: "test-upstream", BaseURL: server.URL, ApiKey: "key", ApiSecret: "secret",
+		Protocol: constants.ConnectionProtocolDujiaoNext,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	const total = 250
+	for i := 0; i < total; i++ {
+		proc := createTestProcurementOrder(t, db, conn.ID, uint(i+1), fmt.Sprintf("PROC-SWEEP-%03d", i), constants.ProcurementStatusAccepted)
+		db.Model(proc).Update("upstream_order_id", 1000+i)
+	}
+
+	newTestProcurementService(db, connSvc).SyncAcceptedOrders()
+	if got := calls.Load(); got != total {
+		t.Fatalf("expected %d upstream checks, got %d", total, got)
 	}
 }

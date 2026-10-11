@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -177,20 +179,42 @@ func (a *DujiaoNextAdapter) CancelOrder(ctx context.Context, orderID uint) error
 	return nil
 }
 
-// DownloadImage 下载图片到本地
+// maxUpstreamImageBytes 单张上游图片的下载上限，防止异常响应写满磁盘。
+const maxUpstreamImageBytes = 10 << 20
+
+var allowedUpstreamImageExts = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
+
+// DownloadImage 下载图片到本地。
+// 只下载与上游站点同主机的图片（含重定向），防止上游返回内网/元数据地址把内部响应落到公开的 /uploads；
+// 其它主机的图片由调用方保留原始 URL。
 func (a *DujiaoNextAdapter) DownloadImage(ctx context.Context, imageURL string) (string, error) {
 	// 相对路径转绝对 URL
 	fullURL := imageURL
 	if strings.HasPrefix(imageURL, "/") {
 		fullURL = a.baseURL + imageURL
 	}
+	base, err := url.Parse(a.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse base url: %w", err)
+	}
+	target, err := url.Parse(fullURL)
+	if err != nil || !strings.EqualFold(target.Host, base.Host) {
+		return "", fmt.Errorf("download image: host not allowed: %s", fullURL)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("create download request: %w", err)
 	}
 
-	resp, err := a.client.Do(req)
+	client := *a.client
+	client.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		if !strings.EqualFold(next.URL.Host, base.Host) {
+			return fmt.Errorf("download image: redirect host not allowed: %s", next.URL.Host)
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download image: %w", err)
 	}
@@ -200,14 +224,9 @@ func (a *DujiaoNextAdapter) DownloadImage(ctx context.Context, imageURL string) 
 		return "", fmt.Errorf("download image: status %d", resp.StatusCode)
 	}
 
-	// 确定文件扩展名
-	ext := filepath.Ext(imageURL)
-	if ext == "" || len(ext) > 6 {
+	ext := strings.ToLower(path.Ext(target.Path))
+	if !allowedUpstreamImageExts[ext] {
 		ext = ".jpg"
-	}
-	// 去除 query string
-	if idx := strings.Index(ext, "?"); idx > 0 {
-		ext = ext[:idx]
 	}
 
 	filename := uuid.New().String() + ext
@@ -221,9 +240,16 @@ func (a *DujiaoNextAdapter) DownloadImage(ctx context.Context, imageURL string) 
 	if err != nil {
 		return "", fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	written, err := io.Copy(f, io.LimitReader(resp.Body, maxUpstreamImageBytes+1))
+	closeErr := f.Close()
+	if err == nil && written > maxUpstreamImageBytes {
+		err = fmt.Errorf("image exceeds %d bytes", maxUpstreamImageBytes)
+	}
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(filePath)
 		return "", fmt.Errorf("write file: %w", err)
 	}
 

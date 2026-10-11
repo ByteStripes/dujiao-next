@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -104,23 +105,22 @@ func (s *Service) SubmitToUpstream(procurementOrderID uint) error {
 
 	// 成功：更新状态，重置 retry_count 用于轮询阶段
 	now := time.Now()
-	updates := map[string]interface{}{
+	upstreamFields := map[string]interface{}{
 		"upstream_order_id": resp.OrderID,
 		"upstream_order_no": resp.OrderNo,
 		"upstream_amount":   resp.Amount,
 		"upstream_currency": resp.Currency,
-		"error_message":     "",
-		"retry_count":       0,
 		"updated_at":        now,
 	}
+	updates := maps.Clone(upstreamFields)
+	updates["error_message"] = ""
+	updates["retry_count"] = 0
 	accepted, err := s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, constants.ProcurementStatusAccepted, updates)
 	if err != nil {
 		return fmt.Errorf("update procurement status: %w", err)
 	}
 	if !accepted {
-		// 上游回调先于下单响应到达（如秒发卡密），采购单已被推进，不能再回退为 accepted
-		logger.Infow("procurement_accept_skipped_status_changed", "procurement_order_id", procOrder.ID)
-		return nil
+		return s.recordUpstreamOrderAfterStatusChanged(procOrder.ID, resp.OrderNo, upstreamFields)
 	}
 
 	logger.Infow("procurement_order_accepted",
@@ -173,6 +173,31 @@ func (s *Service) rejectProcurement(procOrder *procurementdomain.Order, errMsg s
 		"error", errMsg,
 	)
 	s.rollbackLocalOrderOnProcurementFailure(procOrder, errMsg)
+}
+
+// recordUpstreamOrderAfterStatusChanged 上游已成单，但采购单在请求途中被回调推进（如秒发卡密）或被管理员取消：
+// 不回退状态，只补记上游订单号，否则对账与上游退款同步会跳过这单；被取消的需告警人工处理。
+func (s *Service) recordUpstreamOrderAfterStatusChanged(id uint, upstreamOrderNo string, fields map[string]interface{}) error {
+	current, err := s.procRepo.GetByID(id)
+	if err != nil {
+		return fmt.Errorf("reload procurement order: %w", err)
+	}
+	if current == nil {
+		return procurementcontract.ErrNotFound
+	}
+	if _, err := s.procRepo.UpdateStatus(id, current.Status, current.Status, fields); err != nil {
+		return fmt.Errorf("record upstream order: %w", err)
+	}
+	if current.Status == constants.ProcurementStatusCanceled {
+		logger.Errorw("procurement_canceled_but_upstream_created",
+			"procurement_order_id", id,
+			"upstream_order_no", upstreamOrderNo,
+		)
+		s.notifyProcurementFailure(current, fmt.Sprintf("procurement canceled locally but upstream order %s was created and paid", upstreamOrderNo))
+		return nil
+	}
+	logger.Infow("procurement_accept_skipped_status_changed", "procurement_order_id", id, "status", current.Status)
+	return nil
 }
 
 // rollbackLocalOrderOnProcurementFailure 采购单终态失败时回退本地订单状态并通知管理员

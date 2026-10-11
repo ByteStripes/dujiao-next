@@ -332,3 +332,41 @@ func TestSubmitToUpstream_LocalOrderRefunded_RejectsWithoutCallingUpstream(t *te
 		t.Fatalf("expected rejected without upstream call, got called=%v status=%q", called, updated.Status)
 	}
 }
+
+// 下单响应回来前采购单已被回调推进或被管理员取消：不回退状态，但必须补记上游订单号供对账与退款同步。
+func TestSubmitToUpstream_StatusChangedDuringRequest_KeepsStatusAndRecordsUpstreamOrder(t *testing.T) {
+	for _, concurrent := range []string{constants.ProcurementStatusFulfilled, constants.ProcurementStatusCanceled} {
+		t.Run(concurrent, func(t *testing.T) {
+			db := setupProcurementTestDB(t)
+			order := createProcTestOrder(t, db, "PROC-RACE-"+concurrent, constants.OrderStatusPaid, constants.FulfillmentTypeUpstream)
+			pm := &mappingdomain.Mapping{ConnectionID: 1, LocalProductID: 1, UpstreamProductID: 101, IsActive: true}
+			db.Create(pm)
+			db.Create(&mappingdomain.SKUMapping{ProductMappingID: pm.ID, LocalSKUID: 1, UpstreamSKUID: 201, UpstreamIsActive: true})
+
+			var procID uint
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				db.Model(&ProcurementOrder{}).Where("id = ?", procID).Update("status", concurrent)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"ok": true, "order_id": 999, "order_no": "UP-999", "amount": "50.00", "currency": "CNY"})
+			}))
+			defer server.Close()
+
+			connSvc := newTestSiteConnectionService(db, "test-key", t.TempDir())
+			conn, _ := connSvc.Create(siteconnectionapp.CreateInput{
+				Name: "test-upstream", BaseURL: server.URL,
+				ApiKey: "key", ApiSecret: "secret", Protocol: constants.ConnectionProtocolDujiaoNext,
+			})
+			procID = createTestProcurementOrder(t, db, conn.ID, order.ID, order.OrderNo, "pending").ID
+			if err := newTestProcurementService(db, connSvc).SubmitToUpstream(procID); err != nil {
+				t.Fatalf("SubmitToUpstream: %v", err)
+			}
+
+			var updated ProcurementOrder
+			db.First(&updated, procID)
+			if updated.Status != concurrent || updated.UpstreamOrderID != 999 || updated.UpstreamOrderNo != "UP-999" {
+				t.Fatalf("expected status=%q with upstream order recorded, got status=%q upstream_order_id=%d no=%q",
+					concurrent, updated.Status, updated.UpstreamOrderID, updated.UpstreamOrderNo)
+			}
+		})
+	}
+}

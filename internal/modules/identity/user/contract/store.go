@@ -11,6 +11,7 @@ type ListFilter struct {
 	Page          int
 	PageSize      int
 	UserID        uint
+	InviteCodeID  uint
 	Keyword       string
 	Status        string
 	CreatedFrom   *time.Time

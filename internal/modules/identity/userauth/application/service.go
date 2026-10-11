@@ -50,6 +50,7 @@ type Service struct {
 	googleRedirectStore   GoogleRedirectStore
 	memberLevelSvc        MemberLevelAssigner
 	authUnitOfWork        AuthUnitOfWork
+	inviteCodes           InviteCodeChecker
 }
 
 type MemberLevelAssigner interface {
@@ -153,6 +154,9 @@ type UserLoginResult struct {
 	ChallengeToken     string
 	ChallengeJTI       string
 	ChallengeExpiresAt time.Time
+	// InviteRequired 表示第三方身份已验证但需补填邀请码才能建号，InviteTicket 用于提交补全。
+	InviteRequired bool
+	InviteTicket   string
 }
 
 const (
@@ -209,8 +213,8 @@ func (s *Service) ParseUserJWT(tokenString string) (*UserJWTClaims, error) {
 	return nil, errors.New("无效的 token")
 }
 
-// SendVerifyCode 发送邮箱验证码
-func (s *Service) SendVerifyCode(ctx context.Context, email, purpose, locale string) error {
+// SendVerifyCode 发送邮箱验证码；inviteCode 仅在注册用途且开启邀请注册时校验（不核销）。
+func (s *Service) SendVerifyCode(ctx context.Context, email, purpose, locale, inviteCode string) error {
 	if s.emailService == nil {
 		return ErrEmailServiceNotConfigured
 	}
@@ -224,7 +228,15 @@ func (s *Service) SendVerifyCode(ctx context.Context, email, purpose, locale str
 	}
 
 	if purpose == constants.VerifyPurposeRegister {
-		if err := s.checkRegistrationEmailDomain(normalized); err != nil {
+		policy, err := s.loadRegistrationPolicy(inviteCode)
+		if err != nil {
+			return err
+		}
+		// 邀请注册模式下先校验邀请码，避免公开的发信接口被用来向任意邮箱发送注册邮件。
+		if err := s.precheckInviteCode(policy); err != nil {
+			return err
+		}
+		if err := settingsapp.CheckRegistrationEmailDomainAllowed(normalized, policy.EmailDomain); err != nil {
 			return err
 		}
 		exist, err := s.userRepo.GetByEmail(normalized)
@@ -265,19 +277,8 @@ func (s *Service) SendVerifyCode(ctx context.Context, email, purpose, locale str
 	return s.sendVerifyCode(ctx, normalized, purpose, locale)
 }
 
-func (s *Service) checkRegistrationEmailDomain(email string) error {
-	if s == nil || s.settingService == nil {
-		return nil
-	}
-	policy, err := s.settingService.GetRegistrationEmailDomainPolicy()
-	if err != nil {
-		return err
-	}
-	return settingsapp.CheckRegistrationEmailDomainAllowed(email, policy)
-}
-
 // Register 用户注册
-func (s *Service) Register(email, password, code string, agreementAccepted bool, emailVerificationEnabled bool) (*userdomain.User, string, time.Time, error) {
+func (s *Service) Register(email, password, code, inviteCode string, agreementAccepted bool, emailVerificationEnabled bool) (*userdomain.User, string, time.Time, error) {
 	if !agreementAccepted {
 		return nil, "", time.Time{}, ErrAgreementRequired
 	}
@@ -285,7 +286,14 @@ func (s *Service) Register(email, password, code string, agreementAccepted bool,
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}
-	if err := s.checkRegistrationEmailDomain(normalized); err != nil {
+	policy, err := s.loadRegistrationPolicy(inviteCode)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if err := s.precheckInviteCode(policy); err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if err := settingsapp.CheckRegistrationEmailDomainAllowed(normalized, policy.EmailDomain); err != nil {
 		return nil, "", time.Time{}, err
 	}
 	if err := passwordpolicy.Validate(s.cfg.Security.PasswordPolicy.ValidationPolicy(), password); err != nil {
@@ -323,7 +331,7 @@ func (s *Service) Register(email, password, code string, agreementAccepted bool,
 		UpdatedAt:       now,
 	}
 
-	if err := s.userRepo.Create(user); err != nil {
+	if err := s.createUserInTransaction(context.Background(), user, policy); err != nil {
 		return nil, "", time.Time{}, err
 	}
 

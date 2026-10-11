@@ -73,6 +73,7 @@ func TestRouteDomainFilesPreserveTrustBoundaries(t *testing.T) {
 				`userauthtransport.RegisterUserTelegramOIDCAuthRoutes(auth, userTelegramOIDCHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))`,
 				`userauthtransport.RegisterUserTelegramOIDCRoutes(user, userTelegramOIDCHandler)`,
 				`userauthtransport.RegisterUserGoogleAuthRoutes(auth, userGoogleHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))`,
+				`userauthtransport.RegisterUserInviteAuthRoutes(auth, userInviteHandler, middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByIP))`,
 				`userauthtransport.RegisterUserGoogleRoutes(`,
 				`middleware.RateLimitMiddleware(redisClient, loginRule, middleware.KeyByUserIDAndIP)`,
 				`userauthtransport.RegisterUserPasswordAuthRoutes(auth, userPasswordHandler, authRateLimit)`,

@@ -36,6 +36,14 @@ func RegisterUserRegisterAuthRoutes(auth gin.IRoutes, handler *UserLoginHandler,
 	auth.POST("/register", rateLimit, handler.UserRegister)
 }
 
+// RegisterUserInviteAuthRoutes 注册第三方登录新用户补填邀请码端点（需附带限流中间件）。
+func RegisterUserInviteAuthRoutes(auth gin.IRoutes, handler *UserInviteHandler, rateLimit gin.HandlerFunc) {
+	if auth == nil || handler == nil || rateLimit == nil {
+		panic("user invite auth routes: required dependency is nil")
+	}
+	auth.POST("/invite/complete", rateLimit, handler.CompleteInviteRegistration)
+}
+
 // RegisterUserLoginAuthRoutes 注册公开的用户登录端点（需附带限流中间件）。
 func RegisterUserLoginAuthRoutes(auth gin.IRoutes, handler *UserLoginHandler, rateLimit gin.HandlerFunc) {
 	if auth == nil || handler == nil || rateLimit == nil {

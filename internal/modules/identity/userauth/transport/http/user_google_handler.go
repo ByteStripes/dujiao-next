@@ -214,6 +214,9 @@ func (h *UserGoogleHandler) UserGoogleLogin(c *gin.Context) {
 }
 
 func (h *UserGoogleHandler) respondGoogleLoginResult(c *gin.Context, result *AuthLoginResult) {
+	if respondInviteRequired(c, result) {
+		return
+	}
 	if result == nil || result.User == nil {
 		h.respondGoogleLoginError(c, errors.New("google login returned an empty result"))
 		return

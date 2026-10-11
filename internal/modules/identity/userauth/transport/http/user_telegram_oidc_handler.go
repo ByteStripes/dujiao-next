@@ -39,6 +39,8 @@ type AuthLoginResult struct {
 	ExpiresAt          time.Time
 	ChallengeToken     string
 	ChallengeExpiresAt time.Time
+	InviteRequired     bool
+	InviteTicket       string
 }
 
 // LoginRecorder 记录用户登录审计日志。
@@ -140,6 +142,9 @@ func (h *UserTelegramOIDCHandler) TelegramOIDCLoginCallback(c *gin.Context) {
 	if err != nil {
 		h.recordLogin(c, "", 0, constants.LoginLogStatusFailed, constants.LoginLogFailReasonTelegramInvalid, constants.LoginLogSourceTelegram)
 		respondTelegramOIDCError(c, err)
+		return
+	}
+	if respondInviteRequired(c, res) {
 		return
 	}
 	if res.RequiresTOTP {

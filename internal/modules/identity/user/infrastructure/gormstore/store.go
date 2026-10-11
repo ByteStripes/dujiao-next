@@ -83,6 +83,9 @@ func (r *Store) List(filter usercontract.ListFilter) ([]userdomain.User, int64, 
 	if filter.UserID != 0 {
 		query = query.Where("users.id = ?", filter.UserID)
 	}
+	if filter.InviteCodeID != 0 {
+		query = query.Where("users.invite_code_id = ?", filter.InviteCodeID)
+	}
 	if filter.Keyword != "" {
 		like := "%" + filter.Keyword + "%"
 		query = query.Where(

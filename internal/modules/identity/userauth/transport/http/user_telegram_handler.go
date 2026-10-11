@@ -168,6 +168,9 @@ func respondTelegramBindError(c *gin.Context, err error) {
 }
 
 func respondTelegramLoginSuccess(c *gin.Context, h *UserTelegramHandler, res *AuthLoginResult) {
+	if respondInviteRequired(c, res) {
+		return
+	}
 	if res.RequiresTOTP {
 		h.recordLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, constants.LoginLogPasswordOK2FAPending, constants.LoginLogSourceTelegram)
 		response.Success(c, gin.H{

@@ -610,9 +610,9 @@ func resolveRememberMeExpireHours(cfg config.JWTConfig) int {
 func resolveNicknameFromEmail(email string) string {
 	parts := strings.SplitN(email, "@", 2)
 	if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
-		return strings.TrimSpace(parts[0])
+		return userdomain.SanitizeDisplayName(parts[0])
 	}
-	return email
+	return userdomain.SanitizeDisplayName(email)
 }
 
 func resolveExpireMinutes(cfg config.VerifyCodeConfig) int {

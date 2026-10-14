@@ -1,6 +1,6 @@
 {
   "common": {
-    "siteName": "Dujiao-Next",
+    "siteName": "UN小铺",
     "loading": "加载中...",
     "error": "错误",
     "success": "成功",
@@ -114,7 +114,7 @@
   },
   "home": {
     "hero": {
-      "title": "Dujiao-Next · D&N",
+      "title": "UN小铺 · D&N",
       "subtitle": "专业的产品与服务提供商",
       "cta": "浏览商品",
       "badge": "新一代数字商店"
@@ -214,8 +214,8 @@
   },
   "about": {
     "title": "关于我们",
-    "subtitle": "了解Dujiao-Next",
-    "introduction": "Dujiao-Next（D&N）是一家专业的在线工作室，致力于为客户提供优质的产品和服务。我们以创新、专业、高效为核心价值观，不断追求卓越，为客户创造价值。",
+    "subtitle": "了解UN小铺",
+    "introduction": "UN小铺（D&N）是一家专业的在线工作室，致力于为客户提供优质的产品和服务。我们以创新、专业、高效为核心价值观，不断追求卓越，为客户创造价值。",
     "ourServices": "我们的服务",
     "service1": "优质商品推荐与销售",
     "service2": "专业的售前咨询服务",

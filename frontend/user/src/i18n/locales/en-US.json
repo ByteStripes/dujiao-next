@@ -1,6 +1,6 @@
 {
   "common": {
-    "siteName": "Dujiao-Next",
+    "siteName": "UN小铺",
     "loading": "Loading...",
     "error": "Error",
     "success": "Success",
@@ -114,7 +114,7 @@
   },
   "home": {
     "hero": {
-      "title": "Dujiao-Next",
+      "title": "UN小铺",
       "subtitle": "Professional Products and Services Provider",
       "cta": "Browse Products",
       "badge": "Next Gen Digital Store"
@@ -261,8 +261,8 @@
   },
   "about": {
     "title": "About Us",
-    "subtitle": "Learn about Dujiao-Next",
-    "introduction": "Dujiao-Next is a professional online studio dedicated to providing high-quality products and services to our customers. Innovation, professionalism, and efficiency are our core values, and we constantly pursue excellence to create value for our customers.",
+    "subtitle": "Learn about UN小铺",
+    "introduction": "UN小铺 is a professional online studio dedicated to providing high-quality products and services to our customers. Innovation, professionalism, and efficiency are our core values, and we constantly pursue excellence to create value for our customers.",
     "ourServices": "Our Services",
     "service1": "Premium Product Recommendations & Sales",
     "service2": "Professional Pre-sales Consulting",

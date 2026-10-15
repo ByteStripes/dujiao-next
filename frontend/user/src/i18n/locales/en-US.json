@@ -24,7 +24,8 @@
       "serverError": "Internal server error",
       "badGateway": "Bad gateway",
       "serviceUnavailable": "Service unavailable",
-      "networkError": "Network connection failed"
+      "networkError": "Network connection failed",
+      "timeout": "Request timed out. Please try again."
     }
   },
   "errorBoundary": {

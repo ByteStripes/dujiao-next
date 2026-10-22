@@ -41,8 +41,9 @@
                   <Badge variant="success" size="sm" class="rounded-full">{{ item.fulfillmentType === 'auto' ? t('products.fulfillmentType.auto') : t('products.fulfillmentType.manual') }}</Badge>
                 </div>
               </div>
-              <button type="button" class="grid h-10 w-10 flex-none place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" :aria-label="t('cart.remove')" @click="removeWithUndo(item)">
-                <Trash2 class="h-[18px] w-[18px]" />
+              <button type="button" class="inline-flex h-10 flex-none items-center gap-1.5 rounded-full border-2 border-hairline-strong px-3 text-muted-foreground transition-colors hover:border-destructive hover:bg-destructive/10 hover:text-destructive" @click="removeWithUndo(item)">
+                <Trash2 class="h-4 w-4" />
+                <span class="text-[13px] font-semibold">{{ t('cart.remove') }}</span>
               </button>
             </div>
 

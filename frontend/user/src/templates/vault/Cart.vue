@@ -22,8 +22,8 @@
 
     <div v-else class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_340px]">
       <!-- 商品列表 -->
-      <div class="grid gap-4">
-        <article v-for="item in cartItems" :key="cartItemKey(item)" class="flex gap-4 rounded-xl border bg-card p-4">
+      <div class="grid min-w-0 gap-4">
+        <article v-for="item in cartItems" :key="cartItemKey(item)" class="flex min-w-0 gap-4 rounded-xl border bg-card p-4">
           <RouterLink :to="`/products/${item.slug}`" class="relative grid h-[88px] w-[88px] flex-none place-items-center overflow-hidden rounded-md bg-secondary">
             <img v-if="cartItemImage(item)" :src="cartItemImage(item)" :alt="getLocalizedText(item.title)" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />
             <Package v-else class="h-10 w-10 text-muted-foreground" />

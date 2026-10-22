@@ -23,7 +23,7 @@
     </div>
 
     <div v-else class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_360px]">
-      <div class="grid gap-[18px]">
+      <div class="grid min-w-0 gap-[18px]">
         <!-- 商品确认 -->
         <section class="rounded-xl border bg-card p-5">
           <h2 class="mb-3.5 text-lg font-bold">{{ t('checkout.itemsTitle') }}</h2>

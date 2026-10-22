@@ -127,7 +127,7 @@
     </div>
 
     <!-- 默认：订单 + 渠道 + 操作 -->
-    <div v-else class="grid items-start gap-6 lg:grid-cols-[1fr_340px]">
+    <div v-else class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div class="grid gap-[18px]">
         <!-- 订单信息 -->
         <section class="rounded-xl border bg-card p-[22px]">

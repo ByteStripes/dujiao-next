@@ -22,7 +22,7 @@
       <Button as-child class="mt-2 rounded-full" size="sm"><RouterLink to="/products">{{ t('checkout.emptyAction') }}</RouterLink></Button>
     </div>
 
-    <div v-else class="grid items-start gap-7 lg:grid-cols-[1fr_360px]">
+    <div v-else class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div class="grid gap-[18px]">
         <!-- 商品确认 -->
         <section class="rounded-xl border bg-card p-5">

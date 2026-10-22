@@ -20,7 +20,7 @@
       <Button as-child class="mt-2 rounded-full" size="sm"><RouterLink to="/products">{{ t('cart.emptyAction') }}</RouterLink></Button>
     </div>
 
-    <div v-else class="grid items-start gap-7 lg:grid-cols-[1fr_340px]">
+    <div v-else class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_340px]">
       <!-- 商品列表 -->
       <div class="grid gap-4">
         <article v-for="item in cartItems" :key="cartItemKey(item)" class="flex gap-4 rounded-xl border bg-card p-4">

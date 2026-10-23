@@ -4,7 +4,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { adminAPI } from '@/api/admin'
-import type { AdminCoupon, AdminMemberLevel, AdminProduct } from '@/api/types'
+import type { AdminCoupon, AdminMemberLevel, AdminProduct, AdminProductSKU } from '@/api/types'
 import IdCell from '@/components/IdCell.vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -53,6 +53,8 @@ const productOptions = ref<AdminProduct[]>([])
 const productOptionsLoading = ref(false)
 const memberLevels = ref<AdminMemberLevel[]>([])
 const selectedScopeIDs = ref<number[]>([])
+// 选中的规格 ID；为空表示已选商品下的全部规格
+const selectedSkuIDs = ref<number[]>([])
 const form = reactive({
   code: '',
   type: 'percent',
@@ -140,6 +142,7 @@ const resetForm = () => {
   form.ends_at = ''
   form.is_active = true
   selectedScopeIDs.value = []
+  selectedSkuIDs.value = []
   editingId.value = null
   isEditing.value = false
 }
@@ -307,7 +310,28 @@ const toggleScopeProduct = (rawProductID: number | string, v: boolean | 'indeter
     selectedScopeIDs.value = Array.from(new Set([...selectedScopeIDs.value, normalizedID])).sort((a, b) => a - b)
   } else {
     selectedScopeIDs.value = selectedScopeIDs.value.filter((id) => id !== normalizedID)
+    const product = productOptions.value.find((item) => Number(item?.id || 0) === normalizedID)
+    const removed = new Set((product?.skus || []).map((sku) => Number(sku.id)))
+    selectedSkuIDs.value = selectedSkuIDs.value.filter((id) => !removed.has(id))
   }
+}
+
+const scopeSkuChecked = (rawSkuID: number | string) => selectedSkuIDs.value.includes(Math.floor(Number(rawSkuID)))
+
+const toggleScopeSku = (rawSkuID: number | string, v: boolean | 'indeterminate') => {
+  const skuID = Math.floor(Number(rawSkuID))
+  if (!Number.isFinite(skuID) || skuID <= 0) return
+  if (v === true) {
+    selectedSkuIDs.value = Array.from(new Set([...selectedSkuIDs.value, skuID])).sort((a, b) => a - b)
+  } else {
+    selectedSkuIDs.value = selectedSkuIDs.value.filter((id) => id !== skuID)
+  }
+}
+
+const buildSkuLabel = (sku: AdminProductSKU) => {
+  const values = Object.values(sku?.spec_values || {}).filter(Boolean).join(' / ')
+  const code = sku?.sku_code || ''
+  return [`#${sku.id}`, code, values].filter(Boolean).join(' ')
 }
 
 const scopeProductChecked = (rawProductID: number | string) => {
@@ -326,6 +350,7 @@ const selectAllScopeProducts = () => {
 
 const clearScopeProducts = () => {
   selectedScopeIDs.value = []
+  selectedSkuIDs.value = []
 }
 
 const resolveProductNameByID = (rawProductID: number | string) => {
@@ -408,6 +433,7 @@ const openEditModal = (coupon: AdminCoupon) => {
   form.type = coupon.type || 'percent'
   form.value = coupon.value || 0
   selectedScopeIDs.value = normalizeScopeIDs(coupon.scope_ref_ids)
+  selectedSkuIDs.value = normalizeScopeIDs(coupon.scope_sku_ids)
   form.min_amount = coupon.min_amount || 0
   form.max_discount = coupon.max_discount || 0
   form.usage_limit = coupon.usage_limit || 0
@@ -445,6 +471,7 @@ const handleSubmit = async () => {
       type: form.type,
       value: Number(form.value),
       scope_ref_ids: scopeIDs,
+      scope_sku_ids: normalizeScopeIDs(selectedSkuIDs.value),
       min_amount: Number(form.min_amount || 0),
       max_discount: Number(form.max_discount || 0),
       usage_limit: Number(form.usage_limit || 0),
@@ -781,10 +808,13 @@ watch(
                   <div v-else-if="productOptions.length === 0" class="px-3 py-3 text-xs text-muted-foreground">
                     {{ t('admin.coupons.modal.scopeEmpty') }}
                   </div>
-                  <Label
+                  <div
                     v-for="product in productOptions"
                     :key="`scope-product-${product.id}`"
-                    class="flex cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-2 text-sm last:border-b-0 hover:bg-muted/30"
+                    class="border-b border-border/60 last:border-b-0"
+                  >
+                  <Label
+                    class="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-muted/30"
                   >
                     <Checkbox
                       :model-value="scopeProductChecked(product.id)"
@@ -792,6 +822,24 @@ watch(
                     />
                     <span class="truncate">{{ buildProductLabel(product) }}</span>
                   </Label>
+                  <div
+                    v-if="scopeProductChecked(product.id) && (product.skus?.length || 0) > 1"
+                    class="space-y-1 bg-muted/20 py-2 pl-9 pr-3"
+                  >
+                    <p class="text-xs text-muted-foreground">{{ t('admin.coupons.modal.scopeSkuHint') }}</p>
+                    <Label
+                      v-for="sku in product.skus"
+                      :key="`scope-sku-${sku.id}`"
+                      class="flex cursor-pointer items-center gap-2 text-xs"
+                    >
+                      <Checkbox
+                        :model-value="scopeSkuChecked(sku.id)"
+                        @update:model-value="(v) => toggleScopeSku(sku.id, v)"
+                      />
+                      <span class="truncate">{{ buildSkuLabel(sku) }}</span>
+                    </Label>
+                  </div>
+                  </div>
                 </div>
               </div>
             </div>

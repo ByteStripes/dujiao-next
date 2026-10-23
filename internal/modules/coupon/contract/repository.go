@@ -23,6 +23,7 @@ type UsageListFilter struct {
 // EligibilityItem 是 Coupon 计算所需的订单项只读快照，避免优惠券域依赖订单持久化模型。
 type EligibilityItem struct {
 	ProductID         uint
+	SKUID             uint
 	Quantity          int
 	TotalPrice        money.Amount
 	WholesaleDiscount money.Amount

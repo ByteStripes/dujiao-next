@@ -38,6 +38,7 @@ type CreateCouponInput struct {
 	PaymentRoles           []string
 	MemberLevels           []uint
 	ScopeRefIDs            []uint
+	ScopeSKUIDs            []uint
 	StartsAt               *time.Time
 	EndsAt                 *time.Time
 	IsActive               *bool
@@ -57,6 +58,7 @@ type UpdateCouponInput struct {
 	PaymentRoles           []string
 	MemberLevels           []uint
 	ScopeRefIDs            []uint
+	ScopeSKUIDs            []uint
 	StartsAt               *time.Time
 	EndsAt                 *time.Time
 	IsActive               *bool
@@ -88,6 +90,10 @@ func (s *AdminService) Create(input CreateCouponInput) (*coupondomain.Coupon, er
 	}
 
 	scopeRefIDs, err := encodeScopeRefIDs(input.ScopeRefIDs)
+	if err != nil {
+		return nil, err
+	}
+	scopeSKUIDs, err := encodeScopeSKUIDs(input.ScopeSKUIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +135,7 @@ func (s *AdminService) Create(input CreateCouponInput) (*coupondomain.Coupon, er
 		MemberLevels:           memberLevels,
 		ScopeType:              constants.ScopeTypeProduct,
 		ScopeRefIDs:            scopeRefIDs,
+		ScopeSKUIDs:            scopeSKUIDs,
 		StartsAt:               input.StartsAt,
 		EndsAt:                 input.EndsAt,
 		IsActive:               isActive,
@@ -182,6 +189,10 @@ func (s *AdminService) Update(id uint, input UpdateCouponInput) (*coupondomain.C
 	if err != nil {
 		return nil, err
 	}
+	scopeSKUIDs, err := encodeScopeSKUIDs(input.ScopeSKUIDs)
+	if err != nil {
+		return nil, err
+	}
 	paymentRoles, err := normalizeCouponPaymentRoles(input.PaymentRoles)
 	if err != nil {
 		return nil, err
@@ -220,6 +231,7 @@ func (s *AdminService) Update(id uint, input UpdateCouponInput) (*coupondomain.C
 	existing.MemberLevels = memberLevels
 	existing.ScopeType = constants.ScopeTypeProduct
 	existing.ScopeRefIDs = scopeRefIDs
+	existing.ScopeSKUIDs = scopeSKUIDs
 	existing.StartsAt = input.StartsAt
 	existing.EndsAt = input.EndsAt
 	existing.IsActive = isActive
@@ -258,6 +270,30 @@ func encodeScopeRefIDs(ids []uint) (string, error) {
 		return "", couponcontract.ErrScopeInvalid
 	}
 	payload, err := json.Marshal(ids)
+	if err != nil {
+		return "", couponcontract.ErrScopeInvalid
+	}
+	return string(payload), nil
+}
+
+// encodeScopeSKUIDs 编码优惠券适用规格集合；为空表示不限制规格（商品下全部规格）。
+func encodeScopeSKUIDs(ids []uint) (string, error) {
+	seen := make(map[uint]struct{}, len(ids))
+	normalized := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	if len(normalized) == 0 {
+		return "", nil
+	}
+	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return "", couponcontract.ErrScopeInvalid
 	}

@@ -49,3 +49,9 @@ type UsageRepository interface {
 	ListByUser(filter UsageListFilter) ([]coupondomain.CouponUsage, int64, error)
 	DeleteByOrderID(orderID uint) error
 }
+
+// SKUDirectory 解析规格所属商品，用于校验优惠券规格范围。
+type SKUDirectory interface {
+	// ResolveSKUProducts 按规格 ID 返回其所属商品 ID；已删除或不存在的规格不在结果中。
+	ResolveSKUProducts(ids []uint) (map[uint]uint, error)
+}

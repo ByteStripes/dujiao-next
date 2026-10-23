@@ -17,6 +17,13 @@ import (
 // AdminService 优惠券管理服务
 type AdminService struct {
 	repo couponcontract.Repository
+	skus couponcontract.SKUDirectory
+}
+
+// WithSKUDirectory 注入规格目录，用于保存时校验规格是否属于所选商品；未注入时跳过该校验。
+func (s *AdminService) WithSKUDirectory(skus couponcontract.SKUDirectory) *AdminService {
+	s.skus = skus
+	return s
 }
 
 // NewAdminService 创建优惠券管理服务
@@ -95,6 +102,9 @@ func (s *AdminService) Create(input CreateCouponInput) (*coupondomain.Coupon, er
 	}
 	scopeSKUIDs, err := encodeScopeSKUIDs(input.ScopeSKUIDs)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateScopeSKUs(input.ScopeRefIDs, input.ScopeSKUIDs); err != nil {
 		return nil, err
 	}
 	paymentRoles, err := normalizeCouponPaymentRoles(input.PaymentRoles)
@@ -193,6 +203,9 @@ func (s *AdminService) Update(id uint, input UpdateCouponInput) (*coupondomain.C
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateScopeSKUs(input.ScopeRefIDs, input.ScopeSKUIDs); err != nil {
+		return nil, err
+	}
 	paymentRoles, err := normalizeCouponPaymentRoles(input.PaymentRoles)
 	if err != nil {
 		return nil, err
@@ -274,6 +287,34 @@ func encodeScopeRefIDs(ids []uint) (string, error) {
 		return "", couponcontract.ErrScopeInvalid
 	}
 	return string(payload), nil
+}
+
+// validateScopeSKUs 校验每个规格都存在且属于所选商品范围。
+func (s *AdminService) validateScopeSKUs(productIDs, skuIDs []uint) error {
+	if s.skus == nil || len(skuIDs) == 0 {
+		return nil
+	}
+	allowed := make(map[uint]struct{}, len(productIDs))
+	for _, id := range productIDs {
+		allowed[id] = struct{}{}
+	}
+	owners, err := s.skus.ResolveSKUProducts(skuIDs)
+	if err != nil {
+		return err
+	}
+	for _, id := range skuIDs {
+		if id == 0 {
+			continue
+		}
+		productID, ok := owners[id]
+		if !ok {
+			return couponcontract.ErrScopeInvalid
+		}
+		if _, ok := allowed[productID]; !ok {
+			return couponcontract.ErrScopeInvalid
+		}
+	}
+	return nil
 }
 
 // encodeScopeSKUIDs 编码优惠券适用规格集合；为空表示不限制规格（商品下全部规格）。

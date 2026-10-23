@@ -24,6 +24,7 @@ import {
 import { formatDate, formatMoney, getLocalizedText, hasPositiveAmount } from '@/utils/format'
 import { resolveSkuCodeFromSnapshot, resolveSkuSpecFromSnapshot } from '@/utils/sku'
 import { adminUrl } from '@/utils/adminBase'
+import { confirmAction } from '@/utils/confirm'
 
 const props = defineProps<{
   modelValue: boolean
@@ -60,6 +61,13 @@ const manualRefundForm = reactive({
   amount: '',
   reason: '',
   paymentFeeRefunded: true,
+})
+const manualConfirmSubmitting = ref(false)
+const manualConfirmError = ref('')
+const manualConfirmSuccess = ref('')
+const manualConfirmForm = reactive({
+  providerRef: '',
+  remark: '',
 })
 
 
@@ -514,6 +522,49 @@ const resetManualRefundForm = () => {
   manualRefundSuccess.value = ''
 }
 
+const resetManualConfirmForm = () => {
+  manualConfirmForm.providerRef = ''
+  manualConfirmForm.remark = ''
+  manualConfirmError.value = ''
+  manualConfirmSuccess.value = ''
+}
+
+// 仅未支付的父订单（待支付，或已被超时取消）才允许人工确认支付。
+const canManualConfirmPayment = (order: AdminOrder | null) => {
+  if (!order || order.parent_id) return false
+  if (order.paid_at) return false
+  return order.status === 'pending_payment' || order.status === 'canceled'
+}
+
+const submitManualConfirm = async () => {
+  if (!selectedOrder.value || !canManualConfirmPayment(selectedOrder.value)) return
+  manualConfirmError.value = ''
+  manualConfirmSuccess.value = ''
+  const confirmed = await confirmAction({
+    title: t('admin.orders.manualConfirmTitle'),
+    description: t('admin.orders.manualConfirmPrompt'),
+    variant: 'destructive',
+  })
+  if (!confirmed) return
+
+  manualConfirmSubmitting.value = true
+  try {
+    await adminAPI.manualConfirmOrderPayment(Number(selectedOrder.value.id), {
+      provider_ref: manualConfirmForm.providerRef.trim() || undefined,
+      remark: manualConfirmForm.remark.trim() || undefined,
+    })
+    manualConfirmSuccess.value = t('admin.orders.manualConfirmSuccess')
+    manualConfirmForm.providerRef = ''
+    manualConfirmForm.remark = ''
+    await fetchOrderDetail(Number(selectedOrder.value.id))
+    emit('refresh')
+  } catch (err: any) {
+    manualConfirmError.value = err?.message || t('admin.orders.manualConfirmFailed')
+  } finally {
+    manualConfirmSubmitting.value = false
+  }
+}
+
 const formatFeeRate = (channel: AdminPayment | { fee_rate: number | string; fixed_fee?: number | string }) => {
   const feeRate = channel.fee_rate
   const fixedFee = channel.fixed_fee
@@ -648,6 +699,7 @@ const handleClose = () => {
   refundTab.value = 'wallet'
   resetRefundForm()
   resetManualRefundForm()
+  resetManualConfirmForm()
 }
 
 const handleOpenFulfillment = (order: AdminOrder, parentId?: number) => {
@@ -663,6 +715,7 @@ watch(
       refundTab.value = defaultRefundTab(newOrder)
       resetRefundForm()
       resetManualRefundForm()
+      resetManualConfirmForm()
       fetchOrderDetail(newOrder.id)
     }
   }
@@ -675,6 +728,7 @@ watch(
       refundTab.value = defaultRefundTab(props.order)
       resetRefundForm()
       resetManualRefundForm()
+      resetManualConfirmForm()
       fetchOrderDetail(props.order.id)
     }
     if (!open) {
@@ -1159,6 +1213,48 @@ watch(
               </div>
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t('admin.payments.empty') }}</div>
+          </div>
+
+          <div
+            v-if="canManualConfirmPayment(selectedOrder)"
+            class="rounded-xl border border-warning/40 bg-warning/5 p-4"
+          >
+            <h3 class="mb-2 text-sm font-semibold text-foreground">{{ t('admin.orders.manualConfirmTitle') }}</h3>
+            <p class="mb-3 text-xs text-muted-foreground">{{ t('admin.orders.manualConfirmHint') }}</p>
+            <form
+              class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+              @submit.prevent="submitManualConfirm"
+            >
+              <Input
+                class="min-w-0"
+                v-model="manualConfirmForm.providerRef"
+                maxlength="255"
+                :placeholder="t('admin.orders.manualConfirmProviderRefPlaceholder')"
+                :disabled="manualConfirmSubmitting"
+              />
+              <Input
+                class="min-w-0"
+                v-model="manualConfirmForm.remark"
+                maxlength="500"
+                :placeholder="t('admin.orders.manualConfirmRemarkPlaceholder')"
+                :disabled="manualConfirmSubmitting"
+              />
+              <Button class="w-full md:w-auto" type="submit" :disabled="manualConfirmSubmitting">
+                {{ manualConfirmSubmitting ? t('admin.orders.manualConfirmSubmitting') : t('admin.orders.manualConfirmSubmit') }}
+              </Button>
+            </form>
+            <div
+              v-if="manualConfirmError"
+              class="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {{ manualConfirmError }}
+            </div>
+            <div
+              v-if="manualConfirmSuccess"
+              class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"
+            >
+              {{ manualConfirmSuccess }}
+            </div>
           </div>
 
           <div v-if="shouldShowRefundCard(selectedOrder)" class="rounded-xl border border-border bg-muted/20 p-4">

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	orderapp "github.com/dujiao-next/internal/modules/order/application"
 	paymentcontract "github.com/dujiao-next/internal/modules/payment/contract"
 
 	paymentdomain "github.com/dujiao-next/internal/modules/payment/domain"
@@ -137,4 +139,92 @@ func mapProviderErrorToService(err error) error {
 	default:
 		return fmt.Errorf("%w: %v", ErrPaymentGatewayRequestFailed, err)
 	}
+}
+
+// ManualConfirmPaymentInput 后台人工确认支付输入。
+type ManualConfirmPaymentInput struct {
+	OrderID     uint
+	PaymentID   uint // 为 0 时取该订单最新一条支付记录
+	AdminID     uint
+	ProviderRef string // 第三方支付流水号 / 链上交易 Hash（可选）
+	Remark      string
+}
+
+// ManualConfirmPayment 管理员在支付渠道侧核实到账后，手动把订单恢复为已支付并继续履约。
+//
+// 它复用支付回调的事务路径（金额/币种校验、库存消耗、分销利润入账），
+// 提交后同样触发自动发货、邮件、通知、采购等后续流程，不是简单改订单状态。
+// 订单已被超时取消时，会在同一事务内重开订单并重新占用自动发货卡密，库存不足则整体回滚。
+func (s *PaymentService) ManualConfirmPayment(input ManualConfirmPaymentInput) (*paymentdomain.Payment, error) {
+	if input.OrderID == 0 || input.AdminID == 0 {
+		return nil, ErrPaymentInvalid
+	}
+	order, err := s.orderRepo.GetByID(input.OrderID)
+	if err != nil {
+		return nil, orderapp.ErrOrderFetchFailed
+	}
+	if order == nil {
+		return nil, orderapp.ErrOrderNotFound
+	}
+	if order.ParentID != nil || order.PaidAt != nil ||
+		(order.Status != constants.OrderStatusPendingPayment && order.Status != constants.OrderStatusCanceled) {
+		return nil, orderapp.ErrOrderStatusInvalid
+	}
+
+	payment, err := s.pickManualConfirmPayment(order.ID, input.PaymentID)
+	if err != nil {
+		return nil, err
+	}
+
+	ref := strings.TrimSpace(input.ProviderRef)
+	callbackRef := ""
+	if strings.TrimSpace(payment.ProviderRef) == "" {
+		callbackRef = ref
+	}
+	now := time.Now()
+	return s.HandleCallback(PaymentCallbackInput{
+		PaymentID:   payment.ID,
+		OrderNo:     order.OrderNo,
+		ChannelID:   payment.ChannelID,
+		Status:      constants.PaymentStatusSuccess,
+		ProviderRef: callbackRef,
+		Amount:      payment.Amount,
+		Currency:    payment.Currency,
+		Payload: jsonmap.JSON{
+			"manual_confirm": jsonmap.JSON{
+				"admin_id":                input.AdminID,
+				"remark":                  strings.TrimSpace(input.Remark),
+				"provider_ref":            ref,
+				"previous_order_status":   order.Status,
+				"previous_payment_status": payment.Status,
+				"confirmed_at":            now.Format(time.RFC3339),
+			},
+		},
+		manualConfirm: true,
+	})
+}
+
+// pickManualConfirmPayment 选出要被人工确认的支付记录：指定 ID 时必须属于该订单，否则取最新一条。
+func (s *PaymentService) pickManualConfirmPayment(orderID, paymentID uint) (*paymentdomain.Payment, error) {
+	if paymentID > 0 {
+		payment, err := s.paymentRepo.GetByID(paymentID)
+		if err != nil {
+			return nil, ErrPaymentUpdateFailed
+		}
+		if payment == nil {
+			return nil, ErrPaymentNotFound
+		}
+		if payment.OrderID != orderID {
+			return nil, ErrPaymentInvalid
+		}
+		return payment, nil
+	}
+	payments, err := s.paymentRepo.ListByOrderID(orderID)
+	if err != nil {
+		return nil, ErrPaymentUpdateFailed
+	}
+	if len(payments) == 0 {
+		return nil, ErrPaymentNotFound
+	}
+	return &payments[0], nil
 }

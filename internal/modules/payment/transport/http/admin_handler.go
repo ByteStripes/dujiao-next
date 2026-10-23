@@ -77,12 +77,87 @@ type paymentRechargeMeta struct {
 	UserID     uint
 }
 
-// AdminHandler 处理后台支付只读 HTTP。
+// ErrCardSecretInsufficient 人工确认支付重开订单时自动发货卡密库存不足。
+var ErrCardSecretInsufficient = errors.New("card secret insufficient")
+
+// ManualConfirmPaymentInput 后台人工确认支付输入。
+type ManualConfirmPaymentInput struct {
+	OrderID     uint
+	PaymentID   uint
+	AdminID     uint
+	ProviderRef string
+	Remark      string
+}
+
+// AdminPaymentConfirmer 后台人工确认支付端口。
+type AdminPaymentConfirmer interface {
+	ManualConfirmPayment(input ManualConfirmPaymentInput) (*paymentdomain.Payment, error)
+}
+
+// AdminHandler 处理后台支付 HTTP。
 type AdminHandler struct {
-	payments AdminPaymentQuery
-	channels AdminChannelLookup
-	orders   AdminOrderLookup
-	recharge AdminRechargeLookup
+	payments  AdminPaymentQuery
+	channels  AdminChannelLookup
+	orders    AdminOrderLookup
+	recharge  AdminRechargeLookup
+	confirmer AdminPaymentConfirmer
+}
+
+// WithPaymentConfirmer 注入人工确认支付能力；未注入时对应接口返回内部错误。
+func (h *AdminHandler) WithPaymentConfirmer(confirmer AdminPaymentConfirmer) *AdminHandler {
+	h.confirmer = confirmer
+	return h
+}
+
+// AdminManualConfirmPaymentRequest 人工确认支付请求。
+type AdminManualConfirmPaymentRequest struct {
+	PaymentID   uint   `json:"payment_id"`
+	ProviderRef string `json:"provider_ref" binding:"max=255"`
+	Remark      string `json:"remark" binding:"max=500"`
+}
+
+// AdminManualConfirmPayment 管理员核实到账后人工确认订单支付，并继续正常履约流程。
+func (h *AdminHandler) AdminManualConfirmPayment(c *gin.Context) {
+	if h.confirmer == nil {
+		ginutil.RespondError(c, response.CodeInternal, "error.payment_callback_failed", nil)
+		return
+	}
+	adminID, ok := ginutil.GetAdminID(c)
+	if !ok {
+		return
+	}
+	orderID, err := ginutil.ParseParamUint(c, "id")
+	if err != nil {
+		ginutil.RespondError(c, response.CodeBadRequest, "error.order_item_invalid", nil)
+		return
+	}
+	var req AdminManualConfirmPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.RespondBindError(c, err)
+		return
+	}
+	payment, err := h.confirmer.ManualConfirmPayment(ManualConfirmPaymentInput{
+		OrderID:     orderID,
+		PaymentID:   req.PaymentID,
+		AdminID:     adminID,
+		ProviderRef: req.ProviderRef,
+		Remark:      req.Remark,
+	})
+	if err != nil {
+		respondWithMappedError(c, err, adminManualConfirmErrorRules, response.CodeInternal, "error.payment_callback_failed")
+		return
+	}
+	response.Success(c, redactAdminPayment(*payment))
+}
+
+var adminManualConfirmErrorRules = []mappedError{
+	{target: ErrPaymentInvalid, code: response.CodeBadRequest, key: "error.payment_invalid"},
+	{target: ErrPaymentNotFound, code: response.CodeNotFound, key: "error.payment_not_found"},
+	{target: ErrOrderNotFound, code: response.CodeNotFound, key: "error.order_not_found"},
+	{target: ErrOrderStatusInvalid, code: response.CodeBadRequest, key: "error.order_status_invalid"},
+	{target: ErrPaymentAmountMismatch, code: response.CodeBadRequest, key: "error.payment_amount_mismatch"},
+	{target: ErrPaymentCurrencyMismatch, code: response.CodeBadRequest, key: "error.payment_currency_mismatch"},
+	{target: ErrCardSecretInsufficient, code: response.CodeBadRequest, key: "error.card_secret_insufficient"},
 }
 
 func NewAdminHandler(payments AdminPaymentQuery, channels AdminChannelLookup, orders AdminOrderLookup, recharge AdminRechargeLookup) *AdminHandler {

@@ -36,6 +36,10 @@ export function useProductList(options: UseProductListOptions = {}) {
   const categoryMap = computed(() => createCategoryMap(categories.value))
 
   let initializing = true
+  // 记录最近一次真正用于请求的页码/关键词，URL 监听据此判断是否需要重新加载。
+  // 不能用 currentPage / searchQuery 比对：它们可能已被 changePage、清空搜索等提前改写过。
+  let appliedPage = 1
+  let appliedKeyword = ''
 
   const isParentExpanded = (categoryId: number) => {
     return expandedParentIds.value.includes(categoryId)
@@ -86,33 +90,54 @@ export function useProductList(options: UseProductListOptions = {}) {
   }
 
   /**
-   * 将分页/搜索状态统一写入 URL query，避免多个写入点互相覆盖。
-   * 切分类时通过 router.replace({ name, params }) 跳转，那里不带 query，
-   * 页码会自然归 1，不需要在这里处理。
-   * page=1 时不带参数，保持 URL 简洁。
+   * 计算需要写入 URL 的分页/搜索状态，基于最新 route.query 合并，
+   * 避免多个写入点互相覆盖。
+   * page=1、关键词为空时不带参数，保持 URL 简洁。
    */
-  const syncQuery = () => {
+  const buildQuery = (): Record<string, string> => {
     const query: Record<string, string> = { ...route.query as Record<string, string> }
     if (currentPage.value > 1) {
       query.page = String(currentPage.value)
     } else {
       delete query.page
     }
-    router.replace({ query })
+    const keyword = searchQuery.value.trim()
+    if (keyword) {
+      query.q = keyword
+    } else {
+      delete query.q
+    }
+    return query
+  }
+
+  /** 把分页/搜索状态写入 URL；URL 没有实际变化时返回 false，不会触发导航 */
+  const syncQuery = (): boolean => {
+    const query = buildQuery()
+    const current = route.query as Record<string, string>
+    const unchanged =
+      Object.keys(query).length === Object.keys(current).length &&
+      Object.entries(query).every(([key, value]) => current[key] === value)
+    if (unchanged) return false
+    // 连续输入时后一次导航会中止前一次，忽略这类可预期的 rejection
+    router.replace({ query }).catch(() => {})
+    return true
   }
 
   const loadProducts = async () => {
     loading.value = true
     resetListScrollSignal()
+    const page = currentPage.value
+    const keyword = searchQuery.value.trim()
+    appliedPage = page
+    appliedKeyword = keyword
     try {
       const params: any = {
-        page: currentPage.value,
+        page,
         page_size: pageSize.value,
       }
       if (selectedCategory.value) {
         params.category_id = selectedCategory.value
       }
-      const keyword = searchQuery.value.trim()
       if (keyword) {
         params.search = keyword
       }
@@ -122,7 +147,7 @@ export function useProductList(options: UseProductListOptions = {}) {
         totalPages.value = response.data.pagination.total_page || 0
       }
       // 页码超出范围时回落到末页并重新加载
-      if (totalPages.value > 0 && currentPage.value > totalPages.value) {
+      if (totalPages.value > 0 && page > totalPages.value) {
         currentPage.value = totalPages.value
         syncQuery()
         await loadProducts()
@@ -156,16 +181,20 @@ export function useProductList(options: UseProductListOptions = {}) {
 
   const clearSearch = () => {
     if (!searchQuery.value) return
+    // watch(searchQuery) 负责写 URL；URL 已不含 q 时（例如刚进页面 q 为空）直接加载
     searchQuery.value = ''
-    currentPage.value = 1
-    syncQuery()
-    debouncedLoadProducts()
+    if (!syncQuery()) {
+      currentPage.value = 1
+      debouncedLoadProducts()
+    }
   }
 
   const onSearch = () => {
     currentPage.value = 1
-    syncQuery()
-    debouncedLoadProducts()
+    // 关键词没变时 URL 不变，watch(route.query.q) 不会触发，需主动加载一次
+    if (!syncQuery()) {
+      debouncedLoadProducts()
+    }
   }
 
   const syncSelectedCategoryFromRoute = () => {
@@ -205,19 +234,30 @@ export function useProductList(options: UseProductListOptions = {}) {
     if (selectedCategory.value) {
       const matched = categories.value.find((category) => category.id === selectedCategory.value)
       if (matched?.slug && route.params.slug !== matched.slug) {
-        // 切分类时不保留 page query，让 URL 简洁
-        router.replace({ name: categoryRouteName, params: { slug: matched.slug } })
+        // 切分类时保留关键词、丢掉页码，让 URL 简洁
+        router.replace({ name: categoryRouteName, params: { slug: matched.slug }, query: buildQuery() })
       }
     } else if (route.name === categoryRouteName) {
-      router.replace({ name: homeRouteName })
+      router.replace({ name: homeRouteName, query: buildQuery() })
     }
   })
 
+  /**
+   * 从 URL query.q 读取搜索关键词（已 trim）。
+   * 输入框内容与它一致时，说明 searchQuery 的这次变化来自 URL（后退/前进/首次进入），
+   * 不应该再写回 URL 或重置页码。
+   */
+  const readKeywordFromQuery = (): string => {
+    const raw = route.query.q
+    return (Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? '')).trim()
+  }
+
   watch(searchQuery, () => {
     if (initializing) return
+    if (searchQuery.value.trim() === readKeywordFromQuery()) return
     currentPage.value = 1
     syncQuery()
-    debouncedLoadProducts()
+    // 加载由 watch(route.query.q) 触发，避免一次输入发出两次请求
   })
 
   watch(
@@ -229,16 +269,26 @@ export function useProductList(options: UseProductListOptions = {}) {
     },
   )
 
-  // URL 里的 page 变化时（包括浏览器后退/前进）同步状态并加载
+  // URL 里的 page / q 变化时（包括浏览器后退/前进）同步状态并加载
   watch(
-    () => route.query.page,
+    () => [route.query.page, route.query.q] as const,
     () => {
       if (initializing) return
       const page = readPageFromQuery()
-      if (page === currentPage.value) return
+      const keyword = readKeywordFromQuery()
+      if (page === appliedPage && keyword === appliedKeyword) return
+      const keywordChanged = keyword !== appliedKeyword
       currentPage.value = page
+      // 只在 URL 与输入框真正不一致时回写（后退/前进、外部链接）。
+      // 用 trim 后比较，避免把用户正在输入的尾随空格吃掉。
+      if (searchQuery.value.trim() !== keyword) {
+        searchQuery.value = keyword
+      }
       debouncedLoadProducts()
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+      // 关键词变化时已回到第 1 页并重置列表，不需要额外滚动
+      if (!keywordChanged) {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
     },
   )
 
@@ -247,7 +297,11 @@ export function useProductList(options: UseProductListOptions = {}) {
     if (syncSelectedCategoryFromRoute()) {
       syncExpandedCategoryState()
     }
-    // 初始化时从 URL 恢复页码
+    // 初始化时从 URL 恢复关键词和页码
+    const keyword = readKeywordFromQuery()
+    if (keyword) {
+      searchQuery.value = keyword
+    }
     currentPage.value = readPageFromQuery()
     await loadProducts()
     initializing = false

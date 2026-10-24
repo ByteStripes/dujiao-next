@@ -3,6 +3,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { productAPI, categoryAPI } from '../api'
 import { buildCategoryGroups, createCategoryMap, normalizeCategoryParentId, type PublicCategory } from '../utils/category'
 import { debounceAsync } from '../utils/debounce'
+import { resetListScrollSignal, resolveListScrollSignal } from '../utils/listScrollSignal'
 
 export interface UseProductListOptions {
   pageSize?: number
@@ -84,8 +85,25 @@ export function useProductList(options: UseProductListOptions = {}) {
     }
   }
 
+  /**
+   * 将分页/搜索状态统一写入 URL query，避免多个写入点互相覆盖。
+   * 切分类时通过 router.replace({ name, params }) 跳转，那里不带 query，
+   * 页码会自然归 1，不需要在这里处理。
+   * page=1 时不带参数，保持 URL 简洁。
+   */
+  const syncQuery = () => {
+    const query: Record<string, string> = { ...route.query as Record<string, string> }
+    if (currentPage.value > 1) {
+      query.page = String(currentPage.value)
+    } else {
+      delete query.page
+    }
+    router.replace({ query })
+  }
+
   const loadProducts = async () => {
     loading.value = true
+    resetListScrollSignal()
     try {
       const params: any = {
         page: currentPage.value,
@@ -103,10 +121,18 @@ export function useProductList(options: UseProductListOptions = {}) {
       if (response.data.pagination) {
         totalPages.value = response.data.pagination.total_page || 0
       }
+      // 页码超出范围时回落到末页并重新加载
+      if (totalPages.value > 0 && currentPage.value > totalPages.value) {
+        currentPage.value = totalPages.value
+        syncQuery()
+        await loadProducts()
+        return
+      }
     } catch (error) {
       console.error('Failed to load products:', error)
     } finally {
       loading.value = false
+      resolveListScrollSignal()
     }
   }
 
@@ -124,19 +150,21 @@ export function useProductList(options: UseProductListOptions = {}) {
   const changePage = (page: number) => {
     if (page < 1 || page > totalPages.value) return
     currentPage.value = page
-    debouncedLoadProducts()
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    // URL 更新后由 watch(route.query.page) 触发加载，避免双重请求
+    syncQuery()
   }
 
   const clearSearch = () => {
     if (!searchQuery.value) return
     searchQuery.value = ''
     currentPage.value = 1
+    syncQuery()
     debouncedLoadProducts()
   }
 
   const onSearch = () => {
     currentPage.value = 1
+    syncQuery()
     debouncedLoadProducts()
   }
 
@@ -161,6 +189,13 @@ export function useProductList(options: UseProductListOptions = {}) {
     return true
   }
 
+  /** 从 URL query.page 读取页码，非法值回落到 1 */
+  const readPageFromQuery = (): number => {
+    const raw = route.query.page
+    const parsed = parseInt(Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? ''), 10)
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1
+  }
+
   watch(selectedCategory, () => {
     if (initializing) return
     currentPage.value = 1
@@ -170,6 +205,7 @@ export function useProductList(options: UseProductListOptions = {}) {
     if (selectedCategory.value) {
       const matched = categories.value.find((category) => category.id === selectedCategory.value)
       if (matched?.slug && route.params.slug !== matched.slug) {
+        // 切分类时不保留 page query，让 URL 简洁
         router.replace({ name: categoryRouteName, params: { slug: matched.slug } })
       }
     } else if (route.name === categoryRouteName) {
@@ -180,6 +216,7 @@ export function useProductList(options: UseProductListOptions = {}) {
   watch(searchQuery, () => {
     if (initializing) return
     currentPage.value = 1
+    syncQuery()
     debouncedLoadProducts()
   })
 
@@ -192,11 +229,26 @@ export function useProductList(options: UseProductListOptions = {}) {
     },
   )
 
+  // URL 里的 page 变化时（包括浏览器后退/前进）同步状态并加载
+  watch(
+    () => route.query.page,
+    () => {
+      if (initializing) return
+      const page = readPageFromQuery()
+      if (page === currentPage.value) return
+      currentPage.value = page
+      debouncedLoadProducts()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    },
+  )
+
   const initialize = async () => {
     await loadCategories()
     if (syncSelectedCategoryFromRoute()) {
       syncExpandedCategoryState()
     }
+    // 初始化时从 URL 恢复页码
+    currentPage.value = readPageFromQuery()
     await loadProducts()
     initializing = false
   }

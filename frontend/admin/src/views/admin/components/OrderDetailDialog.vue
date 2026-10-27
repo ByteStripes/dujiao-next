@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   orderStatusClass,
   orderStatusLabel,
+  paymentExceptionLabel as paymentExceptionLabelMap,
   paymentStatusClass as paymentStatusClassMap,
   paymentStatusLabel as paymentStatusLabelMap,
 } from '@/utils/status'
@@ -532,12 +533,7 @@ const resetManualConfirmForm = () => {
   manualConfirmSuccess.value = ''
 }
 
-const paymentExceptionLabel = (code?: string) => {
-  if (!code) return ''
-  const key = `admin.payments.exceptions.${code}`
-  const translated = t(key)
-  return translated === key ? code : translated
-}
+const paymentExceptionLabel = (code?: string) => paymentExceptionLabelMap(t, code)
 
 // 欠付款项已转入用户余额，不能再拿来确认履约（后端同样会拒绝）。
 const isManualConfirmSelectable = (payment: AdminPayment) =>

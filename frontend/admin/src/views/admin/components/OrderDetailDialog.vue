@@ -69,6 +69,8 @@ const manualConfirmForm = reactive({
   providerRef: '',
   remark: '',
 })
+// 管理员必须明确选择要确认的那一条支付记录，不再默认取最新一条。
+const manualConfirmPaymentId = ref<number | null>(null)
 
 
 const userDetailLink = (userId: number) => adminUrl(`/users/${userId}`)
@@ -525,9 +527,21 @@ const resetManualRefundForm = () => {
 const resetManualConfirmForm = () => {
   manualConfirmForm.providerRef = ''
   manualConfirmForm.remark = ''
+  manualConfirmPaymentId.value = null
   manualConfirmError.value = ''
   manualConfirmSuccess.value = ''
 }
+
+const paymentExceptionLabel = (code?: string) => {
+  if (!code) return ''
+  const key = `admin.payments.exceptions.${code}`
+  const translated = t(key)
+  return translated === key ? code : translated
+}
+
+// 欠付款项已转入用户余额，不能再拿来确认履约（后端同样会拒绝）。
+const isManualConfirmSelectable = (payment: AdminPayment) =>
+  payment.exception_code !== 'underpaid_payment_succeeded'
 
 // 仅未支付的父订单（待支付，或已被超时取消）才允许人工确认支付。
 const canManualConfirmPayment = (order: AdminOrder | null) => {
@@ -540,6 +554,10 @@ const submitManualConfirm = async () => {
   if (!selectedOrder.value || !canManualConfirmPayment(selectedOrder.value)) return
   manualConfirmError.value = ''
   manualConfirmSuccess.value = ''
+  if (!manualConfirmPaymentId.value) {
+    manualConfirmError.value = t('admin.orders.manualConfirmSelectRequired')
+    return
+  }
   const confirmed = await confirmAction({
     title: t('admin.orders.manualConfirmTitle'),
     description: t('admin.orders.manualConfirmPrompt'),
@@ -550,12 +568,14 @@ const submitManualConfirm = async () => {
   manualConfirmSubmitting.value = true
   try {
     await adminAPI.manualConfirmOrderPayment(Number(selectedOrder.value.id), {
+      payment_id: manualConfirmPaymentId.value,
       provider_ref: manualConfirmForm.providerRef.trim() || undefined,
       remark: manualConfirmForm.remark.trim() || undefined,
     })
     manualConfirmSuccess.value = t('admin.orders.manualConfirmSuccess')
     manualConfirmForm.providerRef = ''
     manualConfirmForm.remark = ''
+    manualConfirmPaymentId.value = null
     await fetchOrderDetail(Number(selectedOrder.value.id))
     emit('refresh')
   } catch (err: any) {
@@ -1221,6 +1241,46 @@ watch(
           >
             <h3 class="mb-2 text-sm font-semibold text-foreground">{{ t('admin.orders.manualConfirmTitle') }}</h3>
             <p class="mb-3 text-xs text-muted-foreground">{{ t('admin.orders.manualConfirmHint') }}</p>
+            <div class="mb-3">
+              <div class="mb-2 text-xs font-medium text-foreground">{{ t('admin.orders.manualConfirmSelectPayment') }}</div>
+              <div v-if="selectedOrder.payments && selectedOrder.payments.length" class="space-y-2" role="radiogroup">
+                <label
+                  v-for="payment in selectedOrder.payments"
+                  :key="payment.id"
+                  class="flex items-start gap-3 rounded-lg border p-3 text-xs"
+                  :class="[
+                    manualConfirmPaymentId === payment.id ? 'border-primary bg-primary/5' : 'border-border',
+                    isManualConfirmSelectable(payment) ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+                  ]"
+                >
+                  <input
+                    v-model="manualConfirmPaymentId"
+                    type="radio"
+                    class="mt-0.5"
+                    name="manual-confirm-payment"
+                    :value="payment.id"
+                    :disabled="!isManualConfirmSelectable(payment) || manualConfirmSubmitting"
+                  />
+                  <div class="min-w-0 flex-1 space-y-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="font-mono text-foreground">#{{ payment.id }}</span>
+                      <span class="text-foreground">{{ payment.channel_name || '-' }}</span>
+                      <span class="inline-flex rounded-full border px-2 py-0.5" :class="paymentStatusClass(payment.status)">
+                        {{ paymentStatusLabel(payment.status) }}
+                      </span>
+                      <span class="font-mono text-foreground">{{ formatMoney(payment.amount, payment.currency) }}</span>
+                    </div>
+                    <div v-if="payment.exception_code" class="text-warning">
+                      {{ paymentExceptionLabel(payment.exception_code) }}
+                    </div>
+                    <div v-if="!isManualConfirmSelectable(payment)" class="text-muted-foreground">
+                      {{ t('admin.orders.manualConfirmUnderpaidDisabled') }}
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <div v-else class="text-xs text-muted-foreground">{{ t('admin.orders.manualConfirmNoPayments') }}</div>
+            </div>
             <form
               class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
               @submit.prevent="submitManualConfirm"
@@ -1239,7 +1299,7 @@ watch(
                 :placeholder="t('admin.orders.manualConfirmRemarkPlaceholder')"
                 :disabled="manualConfirmSubmitting"
               />
-              <Button class="w-full md:w-auto" type="submit" :disabled="manualConfirmSubmitting">
+              <Button class="w-full md:w-auto" type="submit" :disabled="manualConfirmSubmitting || !manualConfirmPaymentId">
                 {{ manualConfirmSubmitting ? t('admin.orders.manualConfirmSubmitting') : t('admin.orders.manualConfirmSubmit') }}
               </Button>
             </form>

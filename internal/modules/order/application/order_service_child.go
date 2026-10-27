@@ -508,9 +508,12 @@ func ReopenCanceledOrderInTx(tx ordercontract.Transaction, order *orderdomain.Or
 	order.CanceledAt = nil
 	order.UpdatedAt = now
 
-	// 只重新占用自动发货的卡密。人工交付订单重开后进入 fulfilling，由管理员自行提交交付内容，
-	// 人工库存计数交给随后的 markOrderPaid 按正常支付流程消耗。
+	// 重新占用自动发货卡密与人工库存：取消时两者都已释放。
+	// 人工库存必须在这里重新占用，否则随后 markOrderPaid 的 ConsumeManualStock 只看 locked 总量，
+	// 会扣掉其他待支付订单占着的库存。库存不足时整体回滚。
 	secretRepo := tx.CardSecrets()
+	productRepo := tx.Products()
+	productSKURepo := tx.ProductSKUs()
 	if len(order.Children) > 0 {
 		for idx := range order.Children {
 			child := &order.Children[idx]
@@ -523,9 +526,15 @@ func ReopenCanceledOrderInTx(tx ordercontract.Transaction, order *orderdomain.Or
 			if err := reserveAutoSecretsByItems(secretRepo, child.ID, child.Items, now); err != nil {
 				return err
 			}
+			if err := reserveManualStockByItems(productRepo, productSKURepo, child.Items); err != nil {
+				return err
+			}
 		}
 	} else {
 		if err := reserveAutoSecretsByItems(secretRepo, order.ID, order.Items, now); err != nil {
+			return err
+		}
+		if err := reserveManualStockByItems(productRepo, productSKURepo, order.Items); err != nil {
 			return err
 		}
 	}

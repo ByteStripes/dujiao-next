@@ -156,8 +156,13 @@ func (f *manualConfirmFixture) seedAvailableSecrets(t *testing.T, count int) {
 }
 
 func (f *manualConfirmFixture) confirm() (*paymentdomain.Payment, error) {
+	return f.confirmPayment(f.payment.ID)
+}
+
+func (f *manualConfirmFixture) confirmPayment(paymentID uint) (*paymentdomain.Payment, error) {
 	return f.service.ManualConfirmPayment(paymentapp.ManualConfirmPaymentInput{
 		OrderID:     f.order.ID,
+		PaymentID:   paymentID,
 		AdminID:     7,
 		ProviderRef: "TX-HASH-001",
 		Remark:      "callback lost, verified in gateway",
@@ -265,5 +270,139 @@ func TestManualConfirmPaymentRejectsAlreadyPaidOrder(t *testing.T) {
 	}
 	if _, err := fixture.confirm(); !errors.Is(err, orderapp.ErrOrderStatusInvalid) {
 		t.Fatalf("second confirm err = %v, want ErrOrderStatusInvalid", err)
+	}
+}
+
+func (f *manualConfirmFixture) addPayment(t *testing.T, amount int64, status, exceptionCode string) *paymentdomain.Payment {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Second)
+	payment := &paymentdomain.Payment{
+		OrderID:         f.order.ID,
+		ChannelID:       f.payment.ChannelID,
+		ProviderType:    f.payment.ProviderType,
+		ChannelType:     f.payment.ChannelType,
+		InteractionMode: f.payment.InteractionMode,
+		Amount:          money.FromDecimal(decimal.NewFromInt(amount)),
+		FeeRate:         money.FromDecimal(decimal.Zero),
+		FeeAmount:       money.FromDecimal(decimal.Zero),
+		Currency:        "CNY",
+		Status:          status,
+		ExceptionCode:   exceptionCode,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := f.db.Create(payment).Error; err != nil {
+		t.Fatalf("create payment failed: %v", err)
+	}
+	return payment
+}
+
+func TestManualConfirmPaymentRequiresPaymentID(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusPendingPayment, 1)
+	fixture.seedAvailableSecrets(t, 1)
+
+	if _, err := fixture.confirmPayment(0); !errors.Is(err, paymentapp.ErrPaymentInvalid) {
+		t.Fatalf("err = %v, want ErrPaymentInvalid", err)
+	}
+	if order := fixture.reloadOrder(t); order.Status != constants.OrderStatusPendingPayment {
+		t.Fatalf("order must stay pending, got %s", order.Status)
+	}
+}
+
+func TestManualConfirmPaymentOnlyConfirmsSpecifiedPayment(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusPendingPayment, 1)
+	fixture.seedAvailableSecrets(t, 1)
+	// 更新的一条记录（id 更大）不应被默认选中。
+	latest := fixture.addPayment(t, 50, constants.PaymentStatusPending, "")
+
+	confirmed, err := fixture.confirmPayment(fixture.payment.ID)
+	if err != nil {
+		t.Fatalf("manual confirm failed: %v", err)
+	}
+	if confirmed.ID != fixture.payment.ID {
+		t.Fatalf("confirmed payment = %d, want %d", confirmed.ID, fixture.payment.ID)
+	}
+	var reloaded paymentdomain.Payment
+	if err := fixture.db.First(&reloaded, latest.ID).Error; err != nil {
+		t.Fatalf("reload latest payment failed: %v", err)
+	}
+	if reloaded.Status == constants.PaymentStatusSuccess {
+		t.Fatalf("unspecified payment must not be marked success")
+	}
+}
+
+func TestManualConfirmPaymentRejectsPaymentOfOtherOrder(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusPendingPayment, 1)
+	fixture.seedAvailableSecrets(t, 1)
+	other := newManualConfirmFixture(t, constants.OrderStatusPendingPayment, 1)
+
+	// 另一个库里的 ID 在本库可能不存在，也可能属于其他订单，两种情况都必须拒绝。
+	if _, err := fixture.confirmPayment(other.payment.ID + 100); err == nil {
+		t.Fatalf("expected error for unknown payment")
+	}
+}
+
+func TestManualConfirmPaymentRejectsUnderpaidCreditedPayment(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusPendingPayment, 1)
+	fixture.seedAvailableSecrets(t, 1)
+	credited := fixture.addPayment(t, 70, constants.PaymentStatusSuccess, constants.PaymentExceptionUnderpaidSucceeded)
+
+	if _, err := fixture.confirmPayment(credited.ID); !errors.Is(err, paymentapp.ErrPaymentUnderpaidCredited) {
+		t.Fatalf("err = %v, want ErrPaymentUnderpaidCredited", err)
+	}
+	order := fixture.reloadOrder(t)
+	if order.Status != constants.OrderStatusPendingPayment || order.PaidAt != nil {
+		t.Fatalf("order must stay unpaid: status=%s paid_at=%v", order.Status, order.PaidAt)
+	}
+}
+
+func TestManualConfirmPaymentCanceledOrderPaymentNotCoveringTotal(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusCanceled, 1)
+	fixture.seedAvailableSecrets(t, 1)
+	// 模拟混合支付：订单总额 50，其中在线部分只有 30（余额部分取消时已退回）。
+	partial := fixture.addPayment(t, 30, constants.PaymentStatusExpired, "")
+
+	if _, err := fixture.confirmPayment(partial.ID); !errors.Is(err, paymentapp.ErrPaymentCanceledOrderUnderpaid) {
+		t.Fatalf("err = %v, want ErrPaymentCanceledOrderUnderpaid", err)
+	}
+	order := fixture.reloadOrder(t)
+	if order.Status != constants.OrderStatusCanceled || order.PaidAt != nil {
+		t.Fatalf("order must stay canceled: status=%s paid_at=%v", order.Status, order.PaidAt)
+	}
+	if got := fixture.countSecretsByStatus(t, cardsecretdomain.StatusReserved); got != 0 {
+		t.Fatalf("reserved secrets = %d, want 0 after rollback", got)
+	}
+}
+
+func TestManualConfirmPaymentReopenFailsWhenManualStockTakenByOtherOrder(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusCanceled, 1)
+	// 把订单项改成人工交付，库存只剩 0 件可售、1 件被其他待支付订单占用。
+	if err := fixture.db.Model(&orderdomain.OrderItem{}).Where("order_id = ?", fixture.order.ID).
+		Update("fulfillment_type", constants.FulfillmentTypeManual).Error; err != nil {
+		t.Fatalf("update item failed: %v", err)
+	}
+	now := time.Now()
+	sku := &productdomain.ProductSKU{
+		ID: 21, ProductID: 11, SKUCode: "S1", IsActive: true,
+		ManualStockTotal: 0, ManualStockLocked: 1, ManualStockSold: 0,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := fixture.db.Create(sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+
+	if _, err := fixture.confirm(); !errors.Is(err, orderapp.ErrManualStockInsufficient) {
+		t.Fatalf("err = %v, want ErrManualStockInsufficient", err)
+	}
+
+	var reloaded productdomain.ProductSKU
+	if err := fixture.db.First(&reloaded, sku.ID).Error; err != nil {
+		t.Fatalf("reload sku failed: %v", err)
+	}
+	if reloaded.ManualStockLocked != 1 || reloaded.ManualStockTotal != 0 || reloaded.ManualStockSold != 0 {
+		t.Fatalf("other order's reservation must be untouched: %+v", reloaded)
+	}
+	if order := fixture.reloadOrder(t); order.Status != constants.OrderStatusCanceled {
+		t.Fatalf("order must stay canceled, got %s", order.Status)
 	}
 }

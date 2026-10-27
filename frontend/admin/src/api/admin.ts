@@ -212,7 +212,7 @@ export interface AdminManualRefundPayload {
 }
 
 export interface AdminManualConfirmPaymentPayload {
-  payment_id?: number
+  payment_id: number
   provider_ref?: string
   remark?: string
 }

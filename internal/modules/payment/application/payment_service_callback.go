@@ -278,16 +278,22 @@ func (s *PaymentService) applyPaymentUpdate(payment *paymentdomain.Payment, orde
 		// 人工确认：订单必须仍未支付（待支付或已取消）。支付记录可能已是 success
 		// （迟到回调只记账不履约），此时仍要继续恢复订单，不能走下面的幂等短路。
 		manualRecover := false
+		reopened := false
 		if input.manualConfirm {
 			if status != constants.PaymentStatusSuccess || lockedOrder.PaidAt != nil ||
 				(lockedOrder.Status != constants.OrderStatusPendingPayment && lockedOrder.Status != constants.OrderStatusCanceled) {
 				return orderapp.ErrOrderStatusInvalid
+			}
+			// 锁内再校验一次：欠付记录的款项已转入余额，不能再履约。
+			if lockedPayment.ExceptionCode == constants.PaymentExceptionUnderpaidSucceeded {
+				return ErrPaymentUnderpaidCredited
 			}
 			manualRecover = true
 			if lockedOrder.Status == constants.OrderStatusCanceled {
 				if err := orderapp.ReopenCanceledOrderInTx(tx, lockedOrder, now); err != nil {
 					return err
 				}
+				reopened = true
 			}
 		}
 
@@ -311,6 +317,11 @@ func (s *PaymentService) applyPaymentUpdate(payment *paymentdomain.Payment, orde
 			coveredOnlineAmount.LessThan(requiredOnlineAmount)
 
 		if manualRecover && underpaid {
+			// 已取消的混合支付订单：取消时余额部分已退回，重开后应付额变成全额，必然"欠付"。
+			// 这不是渠道到账有问题，给出专门的错误，提示走退款流程。
+			if reopened {
+				return ErrPaymentCanceledOrderUnderpaid
+			}
 			// 人工确认不能把欠付的钱转进余额后让订单继续挂起，直接回滚让管理员核对金额。
 			return ErrPaymentAmountMismatch
 		}

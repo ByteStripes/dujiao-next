@@ -144,7 +144,7 @@ func mapProviderErrorToService(err error) error {
 // ManualConfirmPaymentInput 后台人工确认支付输入。
 type ManualConfirmPaymentInput struct {
 	OrderID     uint
-	PaymentID   uint // 为 0 时取该订单最新一条支付记录
+	PaymentID   uint // 必填：明确要确认的那一条支付记录
 	AdminID     uint
 	ProviderRef string // 第三方支付流水号 / 链上交易 Hash（可选）
 	Remark      string
@@ -156,7 +156,7 @@ type ManualConfirmPaymentInput struct {
 // 提交后同样触发自动发货、邮件、通知、采购等后续流程，不是简单改订单状态。
 // 订单已被超时取消时，会在同一事务内重开订单并重新占用自动发货卡密，库存不足则整体回滚。
 func (s *PaymentService) ManualConfirmPayment(input ManualConfirmPaymentInput) (*paymentdomain.Payment, error) {
-	if input.OrderID == 0 || input.AdminID == 0 {
+	if input.OrderID == 0 || input.AdminID == 0 || input.PaymentID == 0 {
 		return nil, ErrPaymentInvalid
 	}
 	order, err := s.orderRepo.GetByID(input.OrderID)
@@ -171,7 +171,7 @@ func (s *PaymentService) ManualConfirmPayment(input ManualConfirmPaymentInput) (
 		return nil, orderapp.ErrOrderStatusInvalid
 	}
 
-	payment, err := s.pickManualConfirmPayment(order.ID, input.PaymentID)
+	payment, err := s.loadManualConfirmPayment(order.ID, input.PaymentID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,27 +204,21 @@ func (s *PaymentService) ManualConfirmPayment(input ManualConfirmPaymentInput) (
 	})
 }
 
-// pickManualConfirmPayment 选出要被人工确认的支付记录：指定 ID 时必须属于该订单，否则取最新一条。
-func (s *PaymentService) pickManualConfirmPayment(orderID, paymentID uint) (*paymentdomain.Payment, error) {
-	if paymentID > 0 {
-		payment, err := s.paymentRepo.GetByID(paymentID)
-		if err != nil {
-			return nil, ErrPaymentUpdateFailed
-		}
-		if payment == nil {
-			return nil, ErrPaymentNotFound
-		}
-		if payment.OrderID != orderID {
-			return nil, ErrPaymentInvalid
-		}
-		return payment, nil
-	}
-	payments, err := s.paymentRepo.ListByOrderID(orderID)
+// loadManualConfirmPayment 取出管理员明确指定要确认的支付记录：必须属于该订单。
+// 异常码为 underpaid_payment_succeeded 的记录，款项已转入用户余额，不能再拿来履约，否则会重复给付。
+func (s *PaymentService) loadManualConfirmPayment(orderID, paymentID uint) (*paymentdomain.Payment, error) {
+	payment, err := s.paymentRepo.GetByID(paymentID)
 	if err != nil {
 		return nil, ErrPaymentUpdateFailed
 	}
-	if len(payments) == 0 {
+	if payment == nil {
 		return nil, ErrPaymentNotFound
 	}
-	return &payments[0], nil
+	if payment.OrderID != orderID {
+		return nil, ErrPaymentInvalid
+	}
+	if payment.ExceptionCode == constants.PaymentExceptionUnderpaidSucceeded {
+		return nil, ErrPaymentUnderpaidCredited
+	}
+	return payment, nil
 }

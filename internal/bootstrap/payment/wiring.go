@@ -40,7 +40,8 @@ func New(c *container.Container) Handlers {
 			adminChannelLookupAdapter{channels: c.PaymentChannelStore},
 			adminOrderLookupAdapter{orders: c.OrderStore},
 			adminRechargeLookupAdapter{wallets: c.WalletRepo},
-		).WithPaymentConfirmer(adminPaymentConfirmerAdapter{payments: c.PaymentService}),
+			adminPaymentConfirmerAdapter{payments: c.PaymentService},
+		),
 		AdminChannel: paymenttransport.NewAdminChannelHandler(
 			adminChannelCatalogAdapter{payments: c.PaymentService, channels: c.PaymentChannelStore},
 		),

@@ -246,6 +246,7 @@ export interface AdminCoupon {
   member_levels?: number[]
   scope_type: string
   scope_ref_ids: number[] | string
+  scope_sku_ids?: number[] | string
   starts_at?: string
   ends_at?: string
   is_active: boolean

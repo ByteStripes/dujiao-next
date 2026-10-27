@@ -406,3 +406,37 @@ func TestManualConfirmPaymentReopenFailsWhenManualStockTakenByOtherOrder(t *test
 		t.Fatalf("order must stay canceled, got %s", order.Status)
 	}
 }
+
+func TestManualConfirmPaymentReopenConsumesOwnManualStockOnly(t *testing.T) {
+	fixture := newManualConfirmFixture(t, constants.OrderStatusCanceled, 1)
+	// 1 件可售，另有 1 件被其他待支付订单占用：重开后应扣掉可售的那件，别人的占用保持不变。
+	if err := fixture.db.Model(&orderdomain.OrderItem{}).Where("order_id = ?", fixture.order.ID).
+		Update("fulfillment_type", constants.FulfillmentTypeManual).Error; err != nil {
+		t.Fatalf("update item failed: %v", err)
+	}
+	now := time.Now()
+	sku := &productdomain.ProductSKU{
+		ID: 21, ProductID: 11, SKUCode: "S1", IsActive: true,
+		ManualStockTotal: 1, ManualStockLocked: 1, ManualStockSold: 0,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := fixture.db.Create(sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+
+	if _, err := fixture.confirm(); err != nil {
+		t.Fatalf("manual confirm failed: %v", err)
+	}
+
+	var reloaded productdomain.ProductSKU
+	if err := fixture.db.First(&reloaded, sku.ID).Error; err != nil {
+		t.Fatalf("reload sku failed: %v", err)
+	}
+	if reloaded.ManualStockTotal != 0 || reloaded.ManualStockLocked != 1 || reloaded.ManualStockSold != 1 {
+		t.Fatalf("manual stock = total %d locked %d sold %d, want 0/1/1",
+			reloaded.ManualStockTotal, reloaded.ManualStockLocked, reloaded.ManualStockSold)
+	}
+	if order := fixture.reloadOrder(t); order.PaidAt == nil {
+		t.Fatalf("order should be paid after manual confirm, got status %s", order.Status)
+	}
+}

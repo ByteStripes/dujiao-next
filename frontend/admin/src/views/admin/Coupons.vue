@@ -19,6 +19,7 @@ import { useListRefresh, type ListFetchOptions } from '@/composables/useListRefr
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { formatDate, getLocalizedText } from '@/utils/format'
+import { formatSkuDisplayLabel } from '@/utils/sku'
 import { notifyError } from '@/utils/notify'
 import { confirmAction } from '@/utils/confirm'
 import { useFormValidation, rules } from '@/composables/useFormValidation'
@@ -71,7 +72,7 @@ const form = reactive({
   ends_at: '',
   is_active: true,
 })
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 
 const couponSchema = {
@@ -336,10 +337,13 @@ const toggleScopeSku = (rawSkuID: number | string, v: boolean | 'indeterminate')
   }
 }
 
-const buildSkuLabel = (sku: AdminProductSKU) => {
-  const values = Object.values(sku?.spec_values || {}).filter(Boolean).join(' / ')
-  const code = sku?.sku_code || ''
-  return [`#${sku.id}`, code, values].filter(Boolean).join(' ')
+const buildSkuLabel = (sku: AdminProductSKU) =>
+  `#${sku.id} ${formatSkuDisplayLabel(sku, locale.value) || t('admin.orders.itemSkuDefaultCode')}`
+
+// 单规格商品只在券已限定规格时才需要展开去勾它唯一的规格，否则每个已选商品都会多出一块
+const showScopeSkus = (product: AdminProduct) => {
+  const count = product?.skus?.length || 0
+  return scopeProductChecked(product.id) && (count > 1 || (count === 1 && selectedSkuIDs.value.length > 0))
 }
 
 // 已选规格里不属于任何「已选且可见」商品的 ID：可能是商品删掉了该规格，
@@ -863,6 +867,9 @@ watch(
                     {{ t('admin.coupons.modal.scopeClear') }}
                   </Button>
                 </div>
+                <p v-if="productOptions.some(showScopeSkus)" class="text-xs text-muted-foreground">
+                  {{ t('admin.coupons.modal.scopeSkuHint') }}
+                </p>
                 <div class="max-h-56 overflow-auto rounded-lg border border-border bg-background">
                   <div v-if="productOptionsLoading" class="px-3 py-3 text-xs text-muted-foreground">
                     {{ t('admin.common.loading') }}
@@ -885,10 +892,9 @@ watch(
                     <span class="truncate">{{ buildProductLabel(product) }}</span>
                   </Label>
                   <div
-                    v-if="scopeProductChecked(product.id) && (product.skus?.length || 0) > 0"
+                    v-if="showScopeSkus(product)"
                     class="space-y-1 bg-muted/20 py-2 pl-9 pr-3"
                   >
-                    <p class="text-xs text-muted-foreground">{{ t('admin.coupons.modal.scopeSkuHint') }}</p>
                     <Label
                       v-for="sku in product.skus"
                       :key="`scope-sku-${sku.id}`"

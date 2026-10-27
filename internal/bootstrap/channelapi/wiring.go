@@ -163,6 +163,14 @@ func (a paymentAdapter) GetAllowedChannelsForProducts(productIDs []uint) ([]paym
 	return a.payments.GetAllowedChannelsForProducts(productIDs)
 }
 
+func (a paymentAdapter) FilterOrderEligibleChannels(channels []paymentdomain.PaymentChannel, order *orderdomain.Order) []paymentdomain.PaymentChannel {
+	return a.payments.FilterOrderEligibleChannels(channels, order)
+}
+
+func (a paymentAdapter) FilterWalletEligibleChannels(channels []paymentdomain.PaymentChannel, userID uint) ([]paymentdomain.PaymentChannel, error) {
+	return a.payments.FilterWalletEligibleChannels(channels, userID)
+}
+
 func (a paymentAdapter) CreatePayment(input channeltransport.CreatePaymentInput) (*channeltransport.CreatePaymentResult, error) {
 	result, err := a.payments.CreatePayment(paymentapp.CreatePaymentInput{
 		OrderID: input.OrderID, ChannelID: input.ChannelID, UseBalance: input.UseBalance,

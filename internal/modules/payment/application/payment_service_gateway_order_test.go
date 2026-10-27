@@ -46,6 +46,19 @@ func TestValidateOrderChannelEligibilityUsesPersistedOrderIdentity(t *testing.T)
 	}
 }
 
+func TestFilterOrderEligibleChannelsDropsChannelsCreatePaymentWouldReject(t *testing.T) {
+	levelID := uint(2)
+	open := paymentdomain.PaymentChannel{ID: 1}
+	vipOnly := paymentdomain.PaymentChannel{ID: 2, MemberLevels: jsonslice.Uints{3}}
+	rechargeOnly := paymentdomain.PaymentChannel{ID: 3, PaymentTypes: jsonslice.Strings{constants.PaymentTypeWallet}}
+	order := &orderdomain.Order{UserID: 10, MemberLevelID: &levelID}
+
+	got := (&PaymentService{}).FilterOrderEligibleChannels([]paymentdomain.PaymentChannel{open, vipOnly, rechargeOnly}, order)
+	if len(got) != 1 || got[0].ID != open.ID {
+		t.Fatalf("filtered channels = %+v, want only channel 1", got)
+	}
+}
+
 func TestValidateWalletChannelEligibilityRejectsOrderOnlyChannel(t *testing.T) {
 	channel := paymentdomain.PaymentChannel{
 		PaymentRoles: jsonslice.Strings{constants.PaymentRoleMember},

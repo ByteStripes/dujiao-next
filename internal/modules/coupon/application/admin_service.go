@@ -289,7 +289,8 @@ func encodeScopeRefIDs(ids []uint) (string, error) {
 	return string(payload), nil
 }
 
-// validateScopeSKUs 校验每个规格都存在且属于所选商品范围。
+// validateScopeSKUs 校验每个规格都存在且属于所选商品范围，
+// 并保证每个所选商品至少有一个规格被选中（否则该商品永远不会参与优惠）。
 func (s *AdminService) validateScopeSKUs(productIDs, skuIDs []uint) error {
 	if s.skus == nil || len(skuIDs) == 0 {
 		return nil
@@ -302,6 +303,7 @@ func (s *AdminService) validateScopeSKUs(productIDs, skuIDs []uint) error {
 	if err != nil {
 		return err
 	}
+	covered := make(map[uint]struct{}, len(skuIDs))
 	for _, id := range skuIDs {
 		if id == 0 {
 			continue
@@ -311,6 +313,15 @@ func (s *AdminService) validateScopeSKUs(productIDs, skuIDs []uint) error {
 			return couponcontract.ErrScopeInvalid
 		}
 		if _, ok := allowed[productID]; !ok {
+			return couponcontract.ErrScopeInvalid
+		}
+		covered[productID] = struct{}{}
+	}
+	for _, id := range productIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := covered[id]; !ok {
 			return couponcontract.ErrScopeInvalid
 		}
 	}
@@ -334,10 +345,7 @@ func encodeScopeSKUIDs(ids []uint) (string, error) {
 	if len(normalized) == 0 {
 		return "", nil
 	}
-	payload, err := json.Marshal(normalized)
-	if err != nil {
-		return "", couponcontract.ErrScopeInvalid
-	}
+	payload, _ := json.Marshal(normalized)
 	return string(payload), nil
 }
 

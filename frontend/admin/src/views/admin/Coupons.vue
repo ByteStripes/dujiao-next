@@ -143,6 +143,7 @@ const resetForm = () => {
   form.is_active = true
   selectedScopeIDs.value = []
   selectedSkuIDs.value = []
+  scopeSkuCache.clear()
   editingId.value = null
   isEditing.value = false
 }
@@ -232,6 +233,10 @@ const buildProductLabel = (product: AdminProduct) => {
   return name || '-'
 }
 
+// 已选商品被搜索条件过滤掉时会退化成占位项。这里缓存它此前加载到的规格，
+// 占位项补回规格，管理员才能继续勾选，新校验也不会卡在「可见商品没规格」上。
+const scopeSkuCache = new Map<number, AdminProductSKU[]>()
+
 const ensureScopeProductsInOptions = (rows: AdminProduct[]) => {
   if (!selectedScopeIDs.value.length) return rows
   const exists = new Set(
@@ -246,6 +251,7 @@ const ensureScopeProductsInOptions = (rows: AdminProduct[]) => {
         'zh-TW': `#${id}`,
         'en-US': `#${id}`,
       },
+      skus: scopeSkuCache.get(id) || [],
     } as unknown as AdminProduct)
     exists.add(id)
   })
@@ -276,6 +282,8 @@ const loadProductOptions = async (keywordInput?: string) => {
       const id = Number(item?.id || 0)
       if (!Number.isFinite(id) || id <= 0) return
       if (!dedup.has(id)) dedup.set(id, item)
+      const skus = Array.isArray(item?.skus) ? item.skus : []
+      if (skus.length) scopeSkuCache.set(Math.floor(id), skus)
     })
     productOptions.value = ensureScopeProductsInOptions(Array.from(dedup.values()))
   } catch {
@@ -332,6 +340,45 @@ const buildSkuLabel = (sku: AdminProductSKU) => {
   const values = Object.values(sku?.spec_values || {}).filter(Boolean).join(' / ')
   const code = sku?.sku_code || ''
   return [`#${sku.id}`, code, values].filter(Boolean).join(' ')
+}
+
+// 已选规格里不属于任何「已选且可见」商品的 ID：可能是商品删掉了该规格，
+// 或搜索后商品变成了没有 skus 的占位项。界面必须能取消它们，否则券无法保存。
+const orphanScopeSkuIDs = computed(() => {
+  const visible = new Set<number>()
+  productOptions.value.forEach((product) => {
+    const productID = Math.floor(Number(product?.id || 0))
+    if (!selectedScopeIDs.value.includes(productID)) return
+    ;(product?.skus || []).forEach((sku) => visible.add(Math.floor(Number(sku.id))))
+  })
+  return selectedSkuIDs.value.filter((id) => !visible.has(id))
+})
+
+// 传了规格就必须保证每个所选商品都被覆盖，否则后端会返回 ErrScopeInvalid。
+const uncoveredScopeProductIDs = computed(() => {
+  if (!selectedSkuIDs.value.length) return []
+  const covered = new Set<number>()
+  productOptions.value.forEach((product) => {
+    const productID = Math.floor(Number(product?.id || 0))
+    if (!selectedScopeIDs.value.includes(productID)) return
+    ;(product?.skus || []).forEach((sku) => {
+      if (selectedSkuIDs.value.includes(Math.floor(Number(sku.id)))) covered.add(productID)
+    })
+  })
+  // 规格 ID 已失联（商品删了该规格 / 从未加载过）时，无法判断它覆盖哪个商品，
+  // 交给后端判定，避免这里误报。
+  const known = new Set<number>()
+  productOptions.value.forEach((product) => {
+    ;(product?.skus || []).forEach((sku) => known.add(Math.floor(Number(sku.id))))
+  })
+  if (selectedSkuIDs.value.some((id) => !known.has(id))) return []
+  return selectedScopeIDs.value.filter((id) => !covered.has(id))
+})
+
+const removeScopeSku = (rawSkuID: number | string) => {
+  const skuID = Math.floor(Number(rawSkuID))
+  if (!Number.isFinite(skuID)) return
+  selectedSkuIDs.value = selectedSkuIDs.value.filter((id) => id !== skuID)
 }
 
 const scopeProductChecked = (rawProductID: number | string) => {
@@ -464,6 +511,12 @@ const handleSubmit = async () => {
     error.value = t('admin.coupons.errors.scopeRequired')
     return
   }
+  if (uncoveredScopeProductIDs.value.length) {
+    error.value = t('admin.coupons.errors.scopeSkuUncovered', {
+      ids: uncoveredScopeProductIDs.value.map((id) => `#${id}`).join(', '),
+    })
+    return
+  }
   submitting.value = true
   try {
     const payload = {
@@ -522,6 +575,12 @@ const formatScope = (scope?: unknown) => {
       return `#${id}`
     })
     .join(', ')
+}
+
+const formatScopeSKUs = (raw?: unknown) => {
+  const ids = normalizeScopeIDs(raw)
+  if (!ids.length) return ''
+  return ids.map((id) => `#${id}`).join(', ')
 }
 
 const formatPaymentRoles = (raw: unknown) => {
@@ -696,6 +755,9 @@ watch(
             <TableCell class="min-w-[90px] px-6 py-4 text-foreground font-mono">{{ coupon.value }}</TableCell>
             <TableCell class="min-w-[90px] px-6 py-4 text-xs text-muted-foreground">
               <div class="break-words">{{ formatScope(coupon.scope_ref_ids) }}</div>
+              <div v-if="formatScopeSKUs(coupon.scope_sku_ids)" class="break-words">
+                {{ t('admin.coupons.modal.scopeSkuList') }}：{{ formatScopeSKUs(coupon.scope_sku_ids) }}
+              </div>
             </TableCell>
             <TableCell class="min-w-[90px] px-6 py-4 text-xs text-muted-foreground">
               <div class="break-words">{{ t('admin.coupons.limit.minAmount') }}：{{ coupon.min_amount || '-' }}</div>
@@ -823,7 +885,7 @@ watch(
                     <span class="truncate">{{ buildProductLabel(product) }}</span>
                   </Label>
                   <div
-                    v-if="scopeProductChecked(product.id) && (product.skus?.length || 0) > 1"
+                    v-if="scopeProductChecked(product.id) && (product.skus?.length || 0) > 0"
                     class="space-y-1 bg-muted/20 py-2 pl-9 pr-3"
                   >
                     <p class="text-xs text-muted-foreground">{{ t('admin.coupons.modal.scopeSkuHint') }}</p>
@@ -840,6 +902,26 @@ watch(
                     </Label>
                   </div>
                   </div>
+                </div>
+                <div
+                  v-if="orphanScopeSkuIDs.length"
+                  class="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                >
+                  <span>{{ t('admin.coupons.modal.scopeSkuOrphan') }}：</span>
+                  <span
+                    v-for="skuID in orphanScopeSkuIDs"
+                    :key="`scope-orphan-sku-${skuID}`"
+                    class="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-background px-2 py-0.5"
+                  >
+                    #{{ skuID }}
+                    <button
+                      type="button"
+                      class="text-amber-700 hover:text-amber-900"
+                      :title="t('admin.coupons.modal.scopeSkuRemove')"
+                      :aria-label="t('admin.coupons.modal.scopeSkuRemove')"
+                      @click="removeScopeSku(skuID)"
+                    >✕</button>
+                  </span>
                 </div>
               </div>
             </div>

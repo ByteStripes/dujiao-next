@@ -59,3 +59,26 @@ func TestCouponAdminServiceValidatesScopeSKUsBelongToProducts(t *testing.T) {
 		t.Fatalf("create without skus failed: %v", err)
 	}
 }
+
+// 限制规格时，每个所选商品都必须至少选中一个规格，
+// 否则该商品下的订单永远匹配不上，前端提示也会误导管理员。
+func TestCouponAdminServiceRequiresEachProductCoveredBySKUs(t *testing.T) {
+	svc, _ := newCouponAdminServiceForTest(t)
+	svc.WithSKUDirectory(fakeSKUDirectory{11: 1, 12: 1, 21: 2, 22: 2})
+
+	// 商品 1/2 都覆盖：允许。
+	covered := validCouponAdminInput("SKU_COVERED")
+	covered.ScopeRefIDs = []uint{1, 2}
+	covered.ScopeSKUIDs = []uint{11, 22}
+	if _, err := svc.Create(covered); err != nil {
+		t.Fatalf("create with covered skus failed: %v", err)
+	}
+
+	// 商品 2 没有选规格：拒绝。
+	partial := validCouponAdminInput("SKU_PARTIAL")
+	partial.ScopeRefIDs = []uint{1, 2}
+	partial.ScopeSKUIDs = []uint{11}
+	if _, err := svc.Create(partial); !errors.Is(err, couponcontract.ErrScopeInvalid) {
+		t.Fatalf("uncovered product want ErrScopeInvalid got %v", err)
+	}
+}

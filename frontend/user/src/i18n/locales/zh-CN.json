@@ -24,7 +24,8 @@
       "serverError": "服务器内部错误",
       "badGateway": "网关错误",
       "serviceUnavailable": "服务不可用",
-      "networkError": "网络连接失败"
+      "networkError": "网络连接失败",
+      "timeout": "请求超时，请稍后重试"
     }
   },
   "errorBoundary": {
@@ -1700,6 +1701,7 @@
     "backToProducts": "返回商品列表",
     "relatedPosts": "相关文章",
     "deliveryReassurance": "付款成功后，兑换码即时送达订单页与邮箱，凭证仅你本人可见。",
+    "deliveryReassuranceManual": "付款成功后由人工为你处理，处理进度与结果会同步到订单页与邮箱。",
     "loginToBuy": "登录后购买",
     "addToCart": "加入购物车",
     "buyNow": "立即购买",

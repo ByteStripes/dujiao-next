@@ -24,7 +24,8 @@
       "serverError": "Internal server error",
       "badGateway": "Bad gateway",
       "serviceUnavailable": "Service unavailable",
-      "networkError": "Network connection failed"
+      "networkError": "Network connection failed",
+      "timeout": "Request timed out. Please try again."
     }
   },
   "errorBoundary": {
@@ -197,6 +198,7 @@
     "backToProducts": "Back to Products",
     "relatedPosts": "Related Articles",
     "deliveryReassurance": "After payment, your code is delivered instantly to the order page and your email — visible only to you.",
+    "deliveryReassuranceManual": "After payment, your order is handled manually. Progress and results are posted to the order page and your email.",
     "loginToBuy": "Login to buy",
     "addToCart": "Add to cart",
     "buyNow": "Buy now",

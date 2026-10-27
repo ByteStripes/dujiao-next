@@ -238,6 +238,7 @@ func TestBuildChannelPaymentResponseIncludesOrderSummary(t *testing.T) {
 	order := &orderdomain.Order{
 		ID:               9,
 		OrderNo:          "DJ20260310002",
+		Currency:         "CNY",
 		TotalAmount:      money.FromDecimal(decimal.RequireFromString("99.00")),
 		WalletPaidAmount: money.FromDecimal(decimal.RequireFromString("19.00")),
 		OnlinePaidAmount: money.FromDecimal(decimal.RequireFromString("80.00")),
@@ -253,7 +254,8 @@ func TestBuildChannelPaymentResponseIncludesOrderSummary(t *testing.T) {
 		Amount:          money.FromDecimal(decimal.RequireFromString("80.80")),
 		FeeRate:         money.FromDecimal(decimal.RequireFromString("1.00")),
 		FeeAmount:       money.FromDecimal(decimal.RequireFromString("0.80")),
-		Currency:        "CNY",
+		FeePolicy:       "merchant_absorbed",
+		Currency:        "GBP",
 		PayURL:          "https://pay.example.com",
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -271,6 +273,13 @@ func TestBuildChannelPaymentResponseIncludesOrderSummary(t *testing.T) {
 	}
 	if got := resp["paid_amount"]; got != "99.00" {
 		t.Fatalf("expected paid_amount=99.00, got=%v", got)
+	}
+	// Telegram Bot 依赖这两个字段决定是否显示"含手续费"以及手续费币种
+	if got := resp["fee_policy"]; got != "merchant_absorbed" {
+		t.Fatalf("expected fee_policy=merchant_absorbed, got=%v", got)
+	}
+	if got := resp["fee_currency"]; got != "CNY" {
+		t.Fatalf("expected fee_currency=CNY (order currency, not GBP), got=%v", got)
 	}
 }
 
@@ -555,5 +564,85 @@ func TestProvisionTelegramIdentityInviteErrorCodes(t *testing.T) {
 	respondChannelIdentityServiceError(c, userauthapp.ErrRegistrationDisabled)
 	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), `"error_code":"registration_disabled"`) {
 		t.Fatalf("registration disabled: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+type paymentChannelsIdentityStub struct{ IdentityService }
+
+func (paymentChannelsIdentityStub) ProvisionTelegramChannelUserID(TelegramIdentityInput) (uint, error) {
+	return 7, nil
+}
+
+type paymentChannelsOrdersStub struct{ Orders }
+
+func (paymentChannelsOrdersStub) GetOrderByUserOrderNo(string, uint) (*orderdomain.Order, error) {
+	return &orderdomain.Order{UserID: 7, Items: []orderdomain.OrderItem{{ProductID: 1}}}, nil
+}
+
+// paymentChannelsPaymentsStub 的过滤只保留 eligibleID，用来确认接口确实调用了资格过滤。
+type paymentChannelsPaymentsStub struct {
+	Payments
+	eligibleID uint
+}
+
+func (s paymentChannelsPaymentsStub) all() []paymentdomain.PaymentChannel {
+	return []paymentdomain.PaymentChannel{{ID: 1, Name: "open"}, {ID: 2, Name: "vip-only"}}
+}
+
+func (s paymentChannelsPaymentsStub) GetAllowedChannelsForProducts([]uint) ([]paymentdomain.PaymentChannel, error) {
+	return s.all(), nil
+}
+
+func (s paymentChannelsPaymentsStub) GetWalletRechargeChannels() ([]paymentdomain.PaymentChannel, error) {
+	return s.all(), nil
+}
+
+func (s paymentChannelsPaymentsStub) keepEligible(channels []paymentdomain.PaymentChannel) []paymentdomain.PaymentChannel {
+	var kept []paymentdomain.PaymentChannel
+	for _, ch := range channels {
+		if ch.ID == s.eligibleID {
+			kept = append(kept, ch)
+		}
+	}
+	return kept
+}
+
+func (s paymentChannelsPaymentsStub) FilterOrderEligibleChannels(channels []paymentdomain.PaymentChannel, _ *orderdomain.Order) []paymentdomain.PaymentChannel {
+	return s.keepEligible(channels)
+}
+
+func (s paymentChannelsPaymentsStub) FilterWalletEligibleChannels(channels []paymentdomain.PaymentChannel, _ uint) ([]paymentdomain.PaymentChannel, error) {
+	return s.keepEligible(channels), nil
+}
+
+func TestGetPaymentChannelsFiltersByUserEligibility(t *testing.T) {
+	handler := &Handler{Dependencies: Dependencies{
+		UserAuthService: paymentChannelsIdentityStub{},
+		OrderService:    paymentChannelsOrdersStub{},
+		PaymentService:  paymentChannelsPaymentsStub{eligibleID: 1},
+	}}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/payment-channels", handler.GetPaymentChannels)
+
+	for _, query := range []string{"order_no=DJ1&channel_user_id=123", "context=recharge&channel_user_id=123"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/payment-channels?"+query, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d body=%s", query, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			Data struct {
+				Items []struct {
+					ID uint `json:"id"`
+				} `json:"items"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%s: decode response: %v", query, err)
+		}
+		if len(payload.Data.Items) != 1 || payload.Data.Items[0].ID != 1 {
+			t.Fatalf("%s: expected only eligible channel 1, got %+v", query, payload.Data.Items)
+		}
 	}
 }

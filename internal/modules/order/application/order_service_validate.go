@@ -300,6 +300,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		for _, item := range orderItems {
 			couponItems = append(couponItems, couponcontract.EligibilityItem{
 				ProductID:         item.ProductID,
+				SKUID:             item.SKUID,
 				Quantity:          item.Quantity,
 				TotalPrice:        item.TotalPrice,
 				WholesaleDiscount: item.WholesaleDiscount,
@@ -452,6 +453,10 @@ func applyCouponDiscountToItems(plans []childOrderPlan, coupon *coupondomain.Cou
 	if err != nil {
 		return couponcontract.ErrScopeInvalid
 	}
+	skuIDs, err := coupondomain.DecodeScopeIDs(coupon.ScopeSKUIDs)
+	if err != nil {
+		return couponcontract.ErrScopeInvalid
+	}
 	eligibleIndexes := make([]int, 0, len(plans))
 	eligibleTotal := decimal.Zero
 	scopeMatched := 0
@@ -459,6 +464,11 @@ func applyCouponDiscountToItems(plans []childOrderPlan, coupon *coupondomain.Cou
 	for i := range plans {
 		if _, ok := ids[plans[i].Item.ProductID]; !ok {
 			continue
+		}
+		if len(skuIDs) > 0 {
+			if _, ok := skuIDs[plans[i].Item.SKUID]; !ok {
+				continue
+			}
 		}
 		scopeMatched++
 		if coupon.DisabledWholesalePrice && plans[i].WholesaleDiscount.GreaterThan(decimal.Zero) {

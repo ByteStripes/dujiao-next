@@ -84,6 +84,16 @@ func (s *PaymentService) applyWalletRechargePaymentUpdate(payment *paymentdomain
 	paymentVal := payment
 	newlySucceeded := false
 
+	// 在事务前读取站点币种，防止历史异币充值单入账到同一个钱包。
+	currency := constants.SiteCurrencyDefault
+	if status == constants.PaymentStatusSuccess && s.settingService != nil {
+		var err error
+		currency, err = s.settingService.GetSiteCurrency(constants.SiteCurrencyDefault)
+		if err != nil {
+			return nil, false, ErrPaymentUpdateFailed
+		}
+	}
+
 	err := s.paymentRepo.WithinTransaction(func(tx paymentcontract.Transaction) error {
 		paymentRepo := tx.Payments()
 		walletTx := tx.Wallets()
@@ -138,6 +148,18 @@ func (s *PaymentService) applyWalletRechargePaymentUpdate(payment *paymentdomain
 		canCredit := status == constants.PaymentStatusSuccess && (input.manualConfirm ||
 			(recharge.Status == constants.WalletRechargeStatusPending && lockedPayment.ExpiredAt == nil &&
 				(lockedPayment.Status == constants.PaymentStatusPending || lockedPayment.Status == constants.PaymentStatusInitiated)))
+		if canCredit && !strings.EqualFold(strings.TrimSpace(recharge.Currency), currency) {
+			if input.manualConfirm {
+				return ErrPaymentCurrencyMismatch
+			}
+			// 渠道到账属实但币种不符：照常记录到账并关闭充值单，不入账，留给管理员对账。
+			canCredit = false
+			recharge.Status = constants.WalletRechargeStatusFailed
+			recharge.UpdatedAt = now
+			if err := rechargeRepo.UpdateRechargeOrder(recharge); err != nil {
+				return ErrPaymentUpdateFailed
+			}
+		}
 		if status == constants.PaymentStatusSuccess {
 			if canCredit {
 				lockedPayment.ExceptionCode = ""
